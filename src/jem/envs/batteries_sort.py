@@ -43,6 +43,7 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
     BIN_X_OFFSET_FROM_SOCKET = 0.0
     BIN_Y_OFFSET_FROM_SOCKET = 0.16
     BIN_HALF_SIZE = (0.045, 0.045, 0.012)
+    BIN_WALL_HEIGHT = 0.035  # walls keep released batteries from bouncing or rolling out of the bin
     CATCH_Y_OFFSET_FROM_SOCKET = -0.12
     CATCH_HALF_SIZE = (0.035, 0.035, 0.006)
     HOOD_HALF_SIZE = (0.03, 0.03, 0.035)
@@ -74,6 +75,10 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
         super()._load_scene(options)
         hidden = sapien.Pose(p=[0.0, 0.0, self.HEIGHT_OFFSET])
         self.reject_bin = self._box("reject_bin", self.BIN_HALF_SIZE, np.array([200, 40, 40, 255]) / 255, True, hidden)
+        hx, hy, _ = self.BIN_HALF_SIZE
+        wall_color = np.array([150, 30, 30, 255]) / 255
+        self.bin_walls = [self._box(f"reject_bin_wall_{k}", half, wall_color, True, hidden) for k, half in
+                          enumerate([(0.003, hy, self.BIN_WALL_HEIGHT / 2)] * 2 + [(hx, 0.003, self.BIN_WALL_HEIGHT / 2)] * 2)]
         self.catch_tray = self._box("catch_tray", self.CATCH_HALF_SIZE, np.array([90, 90, 90, 255]) / 255, True, hidden)
         # Visual-only occluders: cameras cannot see seating or (sometimes) the lamp, the gripper passes through.
         self.hood = self._box("socket_hood", self.HOOD_HALF_SIZE, np.array([60, 60, 70, 255]) / 255, False, hidden)
@@ -116,6 +121,13 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
             hood = socket.clone()
             hood[:, 2] += self.HOOD_HALF_SIZE[2] * 0.6
             self.reject_bin.set_pose(Pose.create_from_pq(p=bin_pos, q=q))
+            hx, hy, hz = self.BIN_HALF_SIZE
+            for wall, (dx, dy) in zip(self.bin_walls, [(hx, 0.0), (-hx, 0.0), (0.0, hy), (0.0, -hy)]):
+                wp = bin_pos.clone()
+                wp[:, 0] += dx * np.cos(np.pi / 2) - dy * np.sin(np.pi / 2)
+                wp[:, 1] += dx * np.sin(np.pi / 2) + dy * np.cos(np.pi / 2)
+                wp[:, 2] = 2 * hz + self.BIN_WALL_HEIGHT / 2
+                wall.set_pose(Pose.create_from_pq(p=wp, q=q))
             self.catch_tray.set_pose(Pose.create_from_pq(p=catch, q=q))
             self.hood.set_pose(Pose.create_from_pq(p=hood, q=q))
             cover = catch.clone()

@@ -139,11 +139,20 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
                 test(j)
                 place(j, home[j])
         env.mode = 0
+        # Lower each broken battery to just above the bin floor before releasing, each into its own cell:
+        # dropping from the approach height made batteries bounce off the bin or stack on each other.
+        cells = [(-0.025, -0.025), (0.025, -0.025), (-0.025, 0.025), (0.025, 0.025), (0.0, 0.0), (0.0, -0.03)]
+        z_release = float(u.bin_pos[0, 2] + u.BIN_HALF_SIZE[2]) + 0.014 + 0.02
+        k = 0
         for i in range(n):
             if beliefs[i].p_working < 0.5 and prim.try_pick_from_slot(i, float(home[i][0]), float(home[i][1])):
-                prim.move_via_clearance_carry(i, float(bin_xy[0]), float(bin_xy[1]), prim.z_slot_approach, prim.z_transport)
+                bx, by = float(bin_xy[0]) + cells[k % len(cells)][0], float(bin_xy[1]) + cells[k % len(cells)][1]
+                k += 1
+                prim.move_via_clearance_carry(i, bx, by, prim.z_slot_approach, prim.z_transport)
+                prim.move_pose_xyz(bx, by, z_release)
                 prim.release_gripper_for_place_safe(t=2)
                 prim.hold_steps(2)
+                prim.move_pose_xyz(bx, by, prim.z_slot_approach)
     return u.evaluate()
 
 
