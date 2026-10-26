@@ -50,6 +50,10 @@ def safe_workers(requested):
     return max(1, min(requested, by_ram, by_vram))
 
 
+def _jsonable(o):
+    return o.item() if hasattr(o, "item") else str(o)
+
+
 def _np(x):
     return x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
 
@@ -230,7 +234,7 @@ def episode(task_cfg, seed, split, out, keep_all=False):
             {"seed": seed, "split": split, "task": task_cfg["name"], "env_id": env_id, "steps": len(rows),
              "success": result["success"], "expert_ok": bool(result["expert_ok"]), "decisions": result["decisions"],
              "diag": result.get("diag"),
-             "modes": [r["mode"] for r in rows], "logs": [r["log"] for r in rows]}))
+             "modes": [r["mode"] for r in rows], "logs": [r["log"] for r in rows]}, default=_jsonable))
     env.close()
     return {"seed": seed, "steps": len(rows), "success": result["success"], "kept": kept, "diag": result.get("diag")}
 
@@ -244,7 +248,7 @@ def worker(args):
         r = episode(task_cfg, s, split, out)
         results.append(r)
         done += int(r["kept"])
-        print(json.dumps(r), flush=True)
+        print(json.dumps(r, default=_jsonable), flush=True)
     return results
 
 
@@ -279,7 +283,7 @@ def main():
         {"task": a.task, "split": a.split, "attempted": len(results), "kept": len(kept),
          "expert_success_rate": float(np.mean([r["success"] for r in kept])) if kept else None,
          "steps_p95": float(np.percentile([r["steps"] for r in kept], 95)) if kept else None,
-         "episodes": results}, indent=1))
+         "episodes": results}, indent=1, default=_jsonable))
     print(f"[collect] {a.task}: kept {len(kept)}/{len(results)}", flush=True)
 
 

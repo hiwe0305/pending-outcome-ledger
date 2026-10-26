@@ -39,7 +39,7 @@ def main():
         n = (r["diag"] or {}).get("n", 6)
         r["timeline"] = location_timeline(log["logs"], n)[-12:]
         r["decisions"] = log["decisions"]
-        print(json.dumps(r), flush=True)
+        print(json.dumps(r, default=collect._jsonable), flush=True)
 
 
 if __name__ == "__main__":
