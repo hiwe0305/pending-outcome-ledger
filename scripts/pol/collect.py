@@ -175,8 +175,16 @@ def run_battery_episode(env, prim, rng, max_retests=2):
     in_bin = _np(u._in_box(pos, u.bin_pos, u.BIN_HALF_SIZE, z_extra=2.2 * u.BATTERY_HALF_HEIGHT)[0, :n])
     intended_home = [b.p_working >= 0.5 for b in env.beliefs_ref]
     placed_as_intended = all((at_slot[i] if intended_home[i] else in_bin[i]) for i in range(n))
-    return {"success": bool(_np(info["success"])[0]), "expert_ok": checked and placed_as_intended,
+    diag = {"checked_count": int(_np(u.checked_count)[0]), "n": n, "at_slot": at_slot.tolist(), "in_bin": in_bin.tolist(),
+            "intended_home": intended_home, "held": _np(grasp[0, :n]).tolist(), "stage": int(_np(u.action_stage)[0]),
+            "pos": np.round(_np(pos[0, :n]), 3).tolist(), "steps": len(env.rows), "budget_hit": bool(prim_done(prim))}
+    return {"success": bool(_np(info["success"])[0]), "expert_ok": checked and placed_as_intended, "diag": diag,
             "decisions": [{"battery": i, "tests": b.tests, "p_working": b.p_working} for i, b in enumerate(env.beliefs_ref)]}
+
+
+def prim_done(prim):
+    d = getattr(prim, "episode_done", None) or getattr(prim, "done", None)
+    return bool(d["value"]) if isinstance(d, dict) else False
 
 
 # ---------------------------------------------------------------- worker
@@ -219,9 +227,10 @@ def episode(task_cfg, seed, split, out, keep_all=False):
         (d / f"{seed:06d}.log.json").write_text(json.dumps(
             {"seed": seed, "split": split, "task": task_cfg["name"], "env_id": env_id, "steps": len(rows),
              "success": result["success"], "expert_ok": bool(result["expert_ok"]), "decisions": result["decisions"],
+             "diag": result.get("diag"),
              "modes": [r["mode"] for r in rows], "logs": [r["log"] for r in rows]}))
     env.close()
-    return {"seed": seed, "steps": len(rows), "success": result["success"], "kept": kept}
+    return {"seed": seed, "steps": len(rows), "success": result["success"], "kept": kept, "diag": result.get("diag")}
 
 
 def worker(args):
