@@ -124,7 +124,8 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
             # Spilled. try_extract_from_socket would chase the battery to its true pose (catch tray) and
             # report a grasp; the observable evidence is the fingers closing on nothing in the socket.
             probe_empty_socket()
-            prim.try_pick_from_pose(i, float(catch[0]), float(catch[1]), float(catch[2]) + 0.02)
+            if not prim.try_pick_from_pose(i, float(catch[0]), float(catch[1]), float(catch[2]) + 0.02):
+                env.planner_failed = True  # could not fetch it: the next "test" would insert an empty gripper
             held = False
         beliefs[i].observe(held, reading)
         return held
@@ -137,8 +138,11 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
 
     for i in order:
         env.mode = 0
+        if env.planner_failed:
+            break  # stop early: the episode is dropped anyway, do not burn the step budget
         if not prim.try_pick_from_slot(i, float(home[i][0]), float(home[i][1])):
-            continue
+            env.planner_failed = True
+            break
         tries = 1
         while not test(i) and tries < MAX_SPILL_TRIES and not env.planner_failed:
             tries += 1  # a spill is not a test: every battery must be seated once to be checked
@@ -152,7 +156,7 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
             test(i)
         env.mode = 0
         place(i, home[i] if (deferred or choice == "home") else bin_xy)
-    if deferred:
+    if deferred and not env.planner_failed:
         budget = max_retests
         while (j := choose_verify(beliefs, budget)) is not None:
             env.mode, budget = j + 1, budget - 1
