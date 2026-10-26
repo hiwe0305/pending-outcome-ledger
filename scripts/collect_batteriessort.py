@@ -179,6 +179,10 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
                 prim.release_gripper_for_place_safe(t=2)
                 prim.hold_steps(2)
                 prim.move_pose_xyz(bx, by, prim.z_slot_approach)
+                pos = u.batteries[i].pose.p[:, None]
+                if not bool(u._in_box(pos, u.bin_pos, u.BIN_HALF_SIZE, z_extra=2.2 * u.BATTERY_HALF_HEIGHT)[0, 0]):
+                    env.planner_failed = True  # dropped on the way: visible, but the expert has no recovery for it
+                    break
     return u.evaluate()
 
 

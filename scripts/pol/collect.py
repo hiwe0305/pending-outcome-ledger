@@ -245,7 +245,10 @@ def worker(args):
     for s in seeds:
         if done >= quota:
             break
-        r = episode(task_cfg, s, split, out)
+        try:
+            r = episode(task_cfg, s, split, out)
+        except Exception as exc:  # motion-planner errors (e.g. mplib "Fail to parameterize path")
+            r = {"seed": s, "steps": 0, "success": False, "kept": False, "diag": {"planner_failed": True, "error": repr(exc)[:200]}}
         results.append(r)
         done += int(r["kept"])
         print(json.dumps(r, default=_jsonable), flush=True)
