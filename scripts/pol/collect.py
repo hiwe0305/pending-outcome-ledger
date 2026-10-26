@@ -64,6 +64,7 @@ class Recorder:
         self.rot_scale = float(np.max(np.abs([cfg.rot_lower, cfg.rot_upper])))
         self.dt = 1.0 / float(env.unwrapped.control_freq)
         self.mode, self.rows, self.last_obs = 0, [], None
+        self.planner_failed = False
 
     def __getattr__(self, k):
         return getattr(self.env, k)
@@ -178,7 +179,8 @@ def run_battery_episode(env, prim, rng, max_retests=2):
     diag = {"checked_count": int(_np(u.checked_count)[0]), "n": n, "at_slot": at_slot.tolist(), "in_bin": in_bin.tolist(),
             "intended_home": intended_home, "held": _np(grasp[0, :n]).tolist(), "stage": int(_np(u.action_stage)[0]),
             "pos": np.round(_np(pos[0, :n]), 3).tolist(), "steps": len(env.rows), "budget_hit": bool(prim_done(prim))}
-    return {"success": bool(_np(info["success"])[0]), "expert_ok": checked and placed_as_intended, "diag": diag,
+    diag["planner_failed"] = bool(env.planner_failed)
+    return {"success": bool(_np(info["success"])[0]), "expert_ok": checked and placed_as_intended and not env.planner_failed, "diag": diag,
             "decisions": [{"battery": i, "tests": b.tests, "p_working": b.p_working} for i, b in enumerate(env.beliefs_ref)]}
 
 

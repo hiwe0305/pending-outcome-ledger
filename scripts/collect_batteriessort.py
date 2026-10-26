@@ -19,9 +19,10 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from jem.envs.expert import BatteryBelief, ObservationModel, choose_verify, decide  # noqa: E402
+from jem.envs.expert import SOCKET, BatteryBelief, ObservationModel, choose_verify, decide  # noqa: E402
 
 CHUNK = 8
+MAX_SPILL_TRIES = 4
 
 
 class Recorder:
@@ -32,6 +33,7 @@ class Recorder:
         self.env = env
         self.beliefs_ref = beliefs_ref
         self.mode = 0
+        self.planner_failed = False
         self.rows = []
         cfg = env.unwrapped.agent._controller_configs["pd_ee_delta_pose"]["arm"]
         self.pos_scale = float(np.max(np.abs([cfg.pos_lower, cfg.pos_upper])))
@@ -101,14 +103,31 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
         prim.hold_steps(2)
         prim.move_pose_xyz(x, y, prim.z_socket_approach)
 
+    def probe_empty_socket():
+        x, y = float(prim.socket_pos[0]), float(prim.socket_pos[1])
+        prim.move_via_clearance(x, y, prim.z_socket_approach, prim.z_transport)
+        prim.move_pose_xyz(x, y, prim.z_insert_socket)
+        prim.close_gripper_safe(t=3)
+        prim.open_gripper_safe(t=2)
+        prim.move_pose_xyz(x, y, prim.z_socket_approach)
+
     def test(i):
         start = len(env.rows)
         insert_once()
         reading = lamp_reading(env.rows, start, persistent)
-        held = prim.try_extract_from_socket(i)
-        if not held:  # spilled: the lamp stayed off (a non-event); fetch it from the catch tray
+        seated = bool(env.rows) and env.rows[-1]["log"]["location"][i] == SOCKET
+        if seated:
+            held = prim.try_extract_from_socket(i)
+            if not held:
+                env.planner_failed = True  # seated but not extracted: a motion failure, not evidence
+        else:
+            # Spilled. try_extract_from_socket would chase the battery to its true pose (catch tray) and
+            # report a grasp; the observable evidence is the fingers closing on nothing in the socket.
+            probe_empty_socket()
             prim.try_pick_from_pose(i, float(catch[0]), float(catch[1]), float(catch[2]) + 0.02)
+            held = False
         beliefs[i].observe(held, reading)
+        return held
 
     def place(i, xy):
         if prim.try_return_to_home(i, float(xy[0]), float(xy[1])):
@@ -120,7 +139,9 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
         env.mode = 0
         if not prim.try_pick_from_slot(i, float(home[i][0]), float(home[i][1])):
             continue
-        test(i)
+        tries = 1
+        while not test(i) and tries < MAX_SPILL_TRIES and not env.planner_failed:
+            tries += 1  # a spill is not a test: every battery must be seated once to be checked
         retests = max_retests
         while True:
             choice = "home" if deferred and beliefs[i].tests[-1][0] and beliefs[i].tests[-1][1] is not None else decide(beliefs[i], retests)
