@@ -11,7 +11,8 @@ expert evidence and decisions). Episodes are kept when the expert carried out it
 misleads it, and filtering those out would bias the data towards lucky outcomes. Motion-planner
 failures are dropped and retried with the next seed, as MIKASA's collector does.
 
-Workers are capped by free RAM (one sim process peaks at ~1.75 GB; 3 GB are kept free).
+Workers are capped by free RAM (one sim process peaks at ~1.75 GB; 3 GB are kept free) and by free
+GPU memory (SAPIEN renders on the GPU; 0.5 GB per worker, 1 GB kept free for other jobs on the card).
 """
 import argparse, json, multiprocessing as mp, os, sys, warnings
 from pathlib import Path
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 GB_PER_WORKER, GB_RESERVE = 2.0, 3.0
+VRAM_PER_WORKER, VRAM_RESERVE = 0.5, 1.0
 
 
 def available_gb():
@@ -31,8 +33,21 @@ def available_gb():
     return 0.0
 
 
+def free_vram_gb():
+    import subprocess
+
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10).stdout.split()
+        return float(out[0]) / 1024 if out else 0.0
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 0.0
+
+
 def safe_workers(requested):
-    return max(1, min(requested, int((available_gb() - GB_RESERVE) // GB_PER_WORKER)))
+    by_ram = int((available_gb() - GB_RESERVE) // GB_PER_WORKER)
+    by_vram = int((free_vram_gb() - VRAM_RESERVE) // VRAM_PER_WORKER)
+    return max(1, min(requested, by_ram, by_vram))
 
 
 def _np(x):
@@ -239,7 +254,7 @@ def main():
     total = a.episodes or int(cfg["episodes"])
     w = safe_workers(a.workers)
     if w < a.workers:
-        print(f"[collect] RAM-limited to {w} worker(s) ({available_gb():.1f} GB available)", flush=True)
+        print(f"[collect] limited to {w} worker(s) ({available_gb():.1f} GB RAM, {free_vram_gb():.1f} GB VRAM free)", flush=True)
     attempts = total * a.max_attempt_factor
     seeds = list(range(a.seed_start, a.seed_start + attempts))
     jobs = [(cfg, seeds[k::w], total // w + (k < total % w), a.split, a.out) for k in range(w)]

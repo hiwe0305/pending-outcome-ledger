@@ -13,3 +13,4 @@ third_party/*/
 *.pt
 *.safetensors
 wandb/
+logs/
