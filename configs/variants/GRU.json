@@ -1,0 +1,8 @@
+{
+  "name": "GRU",
+  "common": "../common.json",
+  "variant": "GRU",
+  "evidence": true,
+  "gate": "il",
+  "role": "recurrent latent baseline"
+}

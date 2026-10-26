@@ -1,0 +1,10 @@
+env_id: GatherInject-3-VLA-v0
+family: gather_inject
+base_env: GatherAndRecall3-VLA-v0
+n_objects: 3
+revealed: true
+rho: 0.16           # re-encounter radius: the disc (radius 0.12; drops sit on a 0.075 ring)
+injection: {slip: 0.15, place_drift: 0.1, stick: 0.05}
+heldout: [stick]
+episodes: 500
+max_steps: null

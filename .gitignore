@@ -1,0 +1,15 @@
+data/
+checkpoints/
+runs/
+external/
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+third_party/*/
+.venv-cpu/
+.venv-policy/
+.venv-sim/
+*.pt
+*.safetensors
+wandb/

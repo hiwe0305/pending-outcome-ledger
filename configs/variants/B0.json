@@ -1,0 +1,8 @@
+{
+  "name": "B0",
+  "common": "../common.json",
+  "variant": "B0",
+  "evidence": false,
+  "gate": null,
+  "role": "no-memory reference (G-b)"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "MU",
+  "common": "../common.json",
+  "variant": "MU",
+  "evidence": true,
+  "gate": "il",
+  "role": "recurrent memory tokens (\u00b5VLA-style, not a reproduction)"
+}

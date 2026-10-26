@@ -1,0 +1,3 @@
+memory:
+  name: Markov
+  K: 8

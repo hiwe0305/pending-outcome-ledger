@@ -1,0 +1,8 @@
+{
+  "name": "EEM-callonly",
+  "common": "../common.json",
+  "variant": "EEM",
+  "evidence": false,
+  "gate": "il",
+  "role": "ablation: no intra-chunk evidence"
+}

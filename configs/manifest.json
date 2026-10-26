@@ -1,0 +1,57 @@
+{
+  "source_proposal": "PROPOSAL.md (EEM, 2026-10-26)",
+  "sources": {
+    "mikasa": {
+      "repository": "CognitiveAISystems/MIKASA-Robo",
+      "revision": "3d5a21a99e5df2bcc34c612040b269e394b09438",
+      "scope": "selected audit sources, not complete install"
+    },
+    "oft": {
+      "repository": "moojink/openvla-oft",
+      "revision": "e4287e94541f459edc4feabc4e181f537cd569a8",
+      "scope": "selected audit sources, not complete install"
+    },
+    "memoryvla": {
+      "repository": "shihao1895/MemoryVLA",
+      "revision": "d732ea9072bc063399ccc817aed74ab172eb50be",
+      "scope": "selected audit sources, not complete install"
+    },
+    "transformers_oft": {
+      "repository": "moojink/transformers-openvla-oft",
+      "revision": "bc339d9ad707454c0c115970db43c260067c61ab",
+      "role": "required bidirectional-attention OFT dependency"
+    }
+  },
+  "dataset": {
+    "id": "mikasa-robo/mikasa-robo-vla-lerobot",
+    "revision": "fa5417a266d1cb87ed7715c3dd2d0e4edc067b04",
+    "task_mapping": {
+      "BatteriesCheckerEasy-3-VLA-v0": "batteries_checker_easy_3_vla_v0",
+      "BatteriesCheckerEasy-6-VLA-v0": "batteries_checker_easy_6_vla_v0",
+      "BatteriesCheckerHard-3-VLA-v0": "batteries_checker_hard_3_vla_v0",
+      "BatteriesCheckerHard-6-VLA-v0": "batteries_checker_hard_6_vla_v0"
+    }
+  },
+  "checkpoint": {
+    "id": "openvla/openvla-7b",
+    "revision": "47a0ec7fc4ec123775a391911046cf33cf9ed83f",
+    "role": "candidate common pretrained initialization, not MIKASA fine-tuned",
+    "weights_downloaded": false,
+    "compatibility_verified": false,
+    "initialization_locked": false
+  },
+  "gates": {
+    "G1_data": "pending: collect BatteriesSort demos and pass scripts/probe_shortcuts.py",
+    "G2_env": "pending: scripts/check_batteries_sort.py and official_dummy.py on the server",
+    "G3_labels": "pending: env-log label certificate (schema eem-env-log-v1)",
+    "backbone_injection": "pending: scripts/oft_smoke.py with real 7B weights",
+    "resource_profile": "pending: 1x80GB VRAM/latency profile from oft_smoke.py"
+  },
+  "licenses": {
+    "mikasa": "MIT (LICENSE saved)",
+    "oft": "MIT (LICENSE saved)",
+    "dataset": "MIT (dataset card)",
+    "checkpoint": "MIT per card; upstream Llama terms require audit",
+    "memoryvla": "license path absent; not verified"
+  }
+}

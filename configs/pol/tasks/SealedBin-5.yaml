@@ -1,0 +1,6 @@
+_base_: SealedBin-3.yaml
+env_id: SealedBin-5-VLA-v0
+base_env: GatherAndRecall5-VLA-v0
+n_objects: 5
+episodes: 1000
+max_steps: null

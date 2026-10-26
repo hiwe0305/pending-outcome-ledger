@@ -1,0 +1,4 @@
+memory:
+  name: StateMem
+  K: 8
+  rank: 8

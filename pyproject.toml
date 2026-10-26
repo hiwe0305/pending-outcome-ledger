@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "jem-eem"
+version = "0.4.0"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23", "torch>=2.2"]
+[project.optional-dependencies]
+audit = ["pyarrow>=14", "av>=12", "pillow>=10"]
+test = ["pytest>=8"]
+[tool.setuptools.packages.find]
+where = ["src"]
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

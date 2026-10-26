@@ -1,0 +1,14 @@
+{
+  "name": "EEM-VOI",
+  "common": "../common.json",
+  "variant": "EEM",
+  "evidence": true,
+  "gate": "voi",
+  "gate_kwargs": {
+    "p_working": 0.5,
+    "flip": 0.0,
+    "spill": 0.2,
+    "cost": 0.05
+  },
+  "role": "proposed method, analytic VOI gate"
+}

@@ -1,0 +1,30 @@
+# Stage A: outcome model (POL) and learned baseline memories, trained on frozen features only.
+model:
+  M: 6
+  tau: 0.1
+  d_feat: 1152
+  d_tok: 256
+  n_time: 4
+  n_tok: 32
+  d_ctx: 512
+  d_act: 128
+  d_assoc: 64
+train:
+  lr: 3.0e-4
+  weight_decay: 0.01
+  batch_size: 512
+  steps: 20000
+  warmup: 1000
+  lam_g: 1.0
+  lam_u: 0.1
+  hard_negatives: 32
+  log_every: 20
+  val_every: 1000
+  seed: 0
+events:
+  pre: 8
+  post: 16
+  rho: 0.06
+features:
+  pca_dim: 256
+  pca_fit_frames: 50000

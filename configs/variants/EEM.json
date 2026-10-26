@@ -1,0 +1,8 @@
+{
+  "name": "EEM",
+  "common": "../common.json",
+  "variant": "EEM",
+  "evidence": true,
+  "gate": "il",
+  "role": "proposed method, learned gate"
+}

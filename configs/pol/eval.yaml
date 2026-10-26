@@ -1,0 +1,7 @@
+episodes: 50
+start_seed: 4242424242
+equivalence_margin: 0.03
+bootstrap_repeats: 2000
+bootstrap_seed: 17029
+videos_per_task: 3
+workers: 8

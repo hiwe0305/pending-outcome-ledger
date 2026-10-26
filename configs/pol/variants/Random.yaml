@@ -1,0 +1,4 @@
+memory:
+  name: Random
+  K: 8
+  write_prob: 0.1

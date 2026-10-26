@@ -1,0 +1,5 @@
+_base_: BatteriesSort-3.yaml
+env_id: BatteriesSort-6-VLA-v0
+n_objects: 6
+episodes: 500
+max_steps: null

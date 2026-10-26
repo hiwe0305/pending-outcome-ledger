@@ -1,0 +1,8 @@
+{
+  "name": "B2MLP",
+  "common": "../common.json",
+  "variant": "B2MLP",
+  "evidence": true,
+  "gate": "il",
+  "role": "direct joint transition, MLP (function-class control)"
+}

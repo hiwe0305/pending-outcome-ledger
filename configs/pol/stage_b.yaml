@@ -1,0 +1,31 @@
+# Stage B: pi0 (openpi PyTorch) with K memory tokens in the action-expert suffix; PaliGemma frozen.
+model:
+  checkpoint: checkpoints/pi0_base_pytorch
+  action_horizon: 16
+  exec_steps: 8
+  flow_steps: 10
+  action_dim: 32
+  entry_dim: 50
+  precision: bfloat16
+optim:
+  lr_expert: 5.0e-5
+  lr_memory: 1.0e-4
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+  weight_decay: 1.0e-10
+  clip_grad_norm: 1.0
+  warmup: 1000
+  final_lr_frac: 0.1
+  master_weights_fp32: true
+train:
+  steps: 20000
+  batch_size: 64
+  gradient_checkpointing: true
+  log_every: 20
+  val_every: 2000
+  save_every: 5000
+  checkpoint_candidates: [10000, 15000, 20000]
+  num_workers: 8
+data:
+  tasks: [BatteriesSort-3, BatteriesSort-6, SealedBin-3, SealedBin-5, GatherInject-3, GatherInject-5]
+  val_frac: 0.1

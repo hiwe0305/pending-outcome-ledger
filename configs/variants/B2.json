@@ -1,0 +1,8 @@
+{
+  "name": "B2",
+  "common": "../common.json",
+  "variant": "B2",
+  "evidence": true,
+  "gate": "il",
+  "role": "direct joint transition, linear"
+}

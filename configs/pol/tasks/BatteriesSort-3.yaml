@@ -1,0 +1,11 @@
+env_id: BatteriesSort-3-VLA-v0
+family: batteries_sort
+n_objects: 3
+lamp_mode: flash
+deferred: true
+revealed: false
+rho: 0.06           # re-encounter radius: the socket
+injection: {spill: 0.2, occlusion: 0.15, flip: 0.05, stick: 0.05}
+heldout: [stick]
+episodes: 1000
+max_steps: null      # P95 expert length x 1.15, written by scripts/pol/calibrate_budget.py

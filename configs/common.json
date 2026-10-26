@@ -1,0 +1,78 @@
+{
+  "revision": 2,
+  "tasks": {
+    "primary": [
+      "BatteriesSortHard-3-VLA-v0",
+      "BatteriesSortHard-6-VLA-v0"
+    ],
+    "transient_cue": [
+      "BatteriesSortFlash-3-VLA-v0",
+      "BatteriesSortFlash-6-VLA-v0"
+    ],
+    "negative_evidence": [
+      "BatteriesSortCompound-3-VLA-v0",
+      "BatteriesSortCompound-6-VLA-v0"
+    ],
+    "negative_control": [
+      "BatteriesCheckerHard-3-VLA-v0",
+      "BatteriesCheckerHard-6-VLA-v0"
+    ]
+  },
+  "backbone": {
+    "candidate_checkpoint": "openvla/openvla-7b",
+    "recipe": "OpenVLA-OFT",
+    "chunk_size": 8,
+    "action_dim": 7,
+    "proprio_dim": 7,
+    "camera_order": [
+      "top",
+      "wrist"
+    ],
+    "center_crop": false
+  },
+  "training": {
+    "training_seeds": [
+      17,
+      29,
+      43
+    ],
+    "learning_rate": 0.0002,
+    "lora_rank": 16,
+    "burn_in_calls": 1,
+    "tbptt_calls": 4,
+    "train_val_test": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "pilot_max_episodes": 1,
+    "tuning_budget": "equal epochs and episodes for every variant; fixed before any test evaluation",
+    "split_seed": 17
+  },
+  "evaluation": {
+    "reporting": "custom_subset",
+    "start_seed": 4242424242,
+    "episodes_per_task": 50,
+    "practical_equivalence_interval": [
+      -0.03,
+      0.03
+    ],
+    "bootstrap_repeats": 2000,
+    "bootstrap_seed": 17029
+  },
+  "research_contract": "latex-paper/joint-outcome-proposal/PROPOSAL.md (EEM, 2026-10-26)",
+  "memory": {
+    "roles": 6,
+    "joint_states": 12,
+    "evidence_dim": 64,
+    "kem_capacity": 5,
+    "kem_commit": 0.55,
+    "role_binding": "role i = tray slot i (canonical slot binding)",
+    "label_schema": "eem-env-log-v1"
+  },
+  "data": {
+    "episodes_per_task": 250,
+    "collector": "scripts/collect_batteriessort.py",
+    "max_retests": 2
+  }
+}

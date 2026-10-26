@@ -1,0 +1,8 @@
+{
+  "name": "EEM-nogate",
+  "common": "../common.json",
+  "variant": "EEM",
+  "evidence": true,
+  "gate": null,
+  "role": "ablation: no epistemic gate"
+}

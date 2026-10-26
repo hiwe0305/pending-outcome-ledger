@@ -1,0 +1,13 @@
+env_id: SealedBin-3-VLA-v0
+family: sealed_bin
+base_env: GatherAndRecall3-VLA-v0
+n_objects: 3
+revealed: false
+rho: 0.12           # re-encounter radius: any later interaction with the bin (inner half-width 0.085)
+# Per drop into the bin. A backwards bounce lands under the canopy (seen by no camera); it shows an
+# ambiguous lid jiggle with prob cue_hit, a clean drop shows one with prob cue_false; with prob
+# cue_occluded a shutter hides the lid during the drop (no cue either way: unobservable).
+injection: {deflect_side: 0.1, deflect_behind: 0.1, cue_hit: 0.9, cue_false: 0.1, cue_occluded: 0.2, release_occluded: 0.05}
+heldout: [release_occluded]
+episodes: 500
+max_steps: null

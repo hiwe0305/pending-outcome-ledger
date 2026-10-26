@@ -1,0 +1,10 @@
+# Installed by scripts/setup_server.sh after torch 2.2.1 (cu121) and MIKASA.
+transformers @ git+https://github.com/moojink/transformers-openvla-oft.git@bc339d9ad707454c0c115970db43c260067c61ab
+peft==0.11.1
+timm==0.9.10
+tokenizers==0.19.1
+draccus==0.8.0
+diffusers==0.30.3
+sentencepiece==0.1.99
+accelerate>=0.25.0
+# Use pinned OFT checkout dependencies (dlimp/TF) only when its imports require them.

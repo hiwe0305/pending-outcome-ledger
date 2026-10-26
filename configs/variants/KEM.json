@@ -1,0 +1,8 @@
+{
+  "name": "KEM",
+  "common": "../common.json",
+  "variant": "KEM",
+  "evidence": true,
+  "gate": "il",
+  "role": "EventVLA-style keyframe memory (H5 reference)"
+}

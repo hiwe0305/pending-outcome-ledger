@@ -1,0 +1,6 @@
+memory:
+  name: CheckFIFO
+  K: 8
+  horizon: 8
+  conformal_alpha: 0.1
+  fifo_occluded: true

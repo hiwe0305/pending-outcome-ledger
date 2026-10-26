@@ -1,0 +1,13 @@
+{
+  "name": "server-1gpu-80gb",
+  "gpu": "1x A100/H100 80GB",
+  "precision": "bf16 backbone, fp32 memory/gate",
+  "batch_size": 1,
+  "note_batch": "OFT prompt adapter is batch-1; episodes are trained causally in sequence",
+  "lora_rank": 16,
+  "gradient_checkpointing": false,
+  "expected_vram_gb": "to be measured by scripts/oft_smoke.py (gate resource_profile)",
+  "parallelism": "one training run per GPU; run variants/seeds sequentially or on separate servers",
+  "sim_backend": "gpu",
+  "dataloader_workers": 0
+}
