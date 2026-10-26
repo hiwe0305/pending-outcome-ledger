@@ -142,7 +142,8 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
         # Lower each broken battery to just above the bin floor before releasing, each into its own cell:
         # dropping from the approach height made batteries bounce off the bin or stack on each other.
         cells = [(-0.025, -0.025), (0.025, -0.025), (-0.025, 0.025), (0.025, 0.025), (0.0, 0.0), (0.0, -0.03)]
-        z_release = float(u.bin_pos[0, 2] + u.BIN_HALF_SIZE[2]) + 0.014 + 0.02
+        # z_place_slot is the TCP height with the battery bottom on the table, so add the bin top and 1.5 cm.
+        z_release = float(u.bin_pos[0, 2] + u.BIN_HALF_SIZE[2]) + float(prim.z_place_slot) + 0.015
         k = 0
         for i in range(n):
             if beliefs[i].p_working < 0.5 and prim.try_pick_from_slot(i, float(home[i][0]), float(home[i][1])):
