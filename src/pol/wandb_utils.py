@@ -33,6 +33,12 @@ def init_run(stage, variant, cfg, prov, K, seed, log_every=20, project="pol"):
         return Run(None, log_every)
     if os.environ.get("WANDB_MODE") == "disabled":
         return Run(None, log_every)
-    run = wandb.init(project=project, entity=os.environ.get("WANDB_ENTITY"), group=f"{stage}/{variant}",
-                     name=f"{stage}-{variant}-K{K}-s{seed}", config={**cfg, "provenance": prov}, reinit=True)
+    kwargs = dict(project=project, entity=os.environ.get("WANDB_ENTITY"), group=f"{stage}/{variant}",
+                  name=f"{stage}-{variant}-K{K}-s{seed}", config={**cfg, "provenance": prov}, reinit=True)
+    try:
+        run = wandb.init(**kwargs)
+    except Exception as exc:  # e.g. an invalid API key: never lose a training run to logging
+        print(f"[wandb] online init failed ({type(exc).__name__}: {str(exc)[:120]}); logging offline, "
+              "run `wandb sync wandb/offline-run-*` after `wandb login`", flush=True)
+        run = wandb.init(mode="offline", **kwargs)
     return Run(run, log_every)
