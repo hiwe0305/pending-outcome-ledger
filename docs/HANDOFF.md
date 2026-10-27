@@ -20,22 +20,28 @@ for POL and all baselines (`python -m pol.train_stage_a`), gates (`python -m pol
 (stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 90 passed.
 BatteriesSort collection yield fixed: 13 % → 67 % (bin walls, low placement, spill observed as an empty grasp).
 
-## Open problem (do this next)
+## Outcome-model collapse: fixed 2026-10-27 (commit 2582a5b)
 
-Pilot gates (remote, `runs/gates.json`): N1/G1/G2 all fail, exit 2. Two causes:
-1. Too little val data (8 unrevealed events, 2 failures) — AUROCs are noise.
-2. **The outcome model degenerates**: `q_entropy` stays at log 6 = 1.791 for all 3000 steps,
-   `p_failed_given_z` ≈ 0.166 for every z, `omega0` ≈ 1e-6. The contrastive score
-   `s(v,z,c) = <u(c,z), f(v)>` identifies the event's own view through the context c alone
-   (instance discrimination), so z is unused; identical mixture components are an optimum and
-   `usage_kl` cannot prevent it (the marginal of uniform posteriors is uniform).
+Pilot (3000 steps, batch 128) collapsed: `q_entropy` = log 6, `p_failed_given_z` ≈ 0.166 for all z, `omega0` ≈ 1e-6.
+Cause: `u(c,z)` saw the context, so InfoNCE matched each event's own view through c (instance discrimination), z unused.
+Fix (spec §6.2, plan Task 4): `u_z` from z + event kind only; views as residuals from `scene_mean(own pre-window)`;
+E-step targets from the views only (prior distilled); IIC `−lam_i·I(z1;z2)` between v1/v2 posteriors.
+Regression test `test_em_uses_outcome_when_context_identifies_each_event`; 91 tests pass.
+Retrain on the remote (old run kept as `runs/stage_a/POL_collapsed_215392d`, `runs/gates_collapsed_215392d.json`):
+- train `q_entropy` 1.72 → 0.05–0.28, `z_used` 6, `view_mi` ≈ 1.5 (max 1.79); val NMI 0.30.
+- `p_failed_given_z` = [0, .286, 0, 0, 0, .588]. On train, all 13 BatteriesSort failures fall in z=5 (with 9 ok);
+  but z also encodes task/kind (NMI(z, family:kind) = 0.31; z=1 ≈ SealedBin R+, z=3 ≈ GatherInject), and the
+  SealedBin failures share z=1 with 19 successes. GatherInject has no labelled failures.
+- Gates: exit 2. N1 pass (but no revealed-set control), G1 fail (unrevealed AUROC 0.667 = pol_fake, n=8, 2 failures),
+  G2 fail and **inverted**: AUROC(−ω) = 0.11 (n=11), i.e. ω is higher on occluded events; `omega0` still 1.7e-5
+  (ω is prior-weighted hypothesis disagreement, and the prior is now sharp, prior_nll ≈ 0.39).
 
-Proposed fix (not yet done):
-- add a failing unit test: synthetic data where the context identifies each event -> current code gives uniform q;
-- remove the context from the hypothesis embedding `u_z` (z + event kind only; context only in the prior);
-- add an IIC-style mutual-information term (minimise per-sample posterior entropy, keep the marginal uniform);
-- retrain on the remote: `q_entropy` must drop clearly below 1.79 and `p_failed_given_z` must separate before
-  looking at gates; then collect ~100 episodes/task so gates have power.
+## Next
+
+1. Collect ~100 episodes/task so the gates have power (val now has 8 unrevealed events, 0 BatteriesSort failures).
+2. Look at ω: sign inversion and the tiny scale under a sharp prior (G2 depends on it).
+3. Check whether z keeps encoding task after more data; if so, condition `scene_mean` also on the action, or hold
+   the task out of the clusters (e.g. per-family hypotheses).
 
 ## Remaining plan tasks
 
