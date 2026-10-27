@@ -253,9 +253,11 @@ def main(argv=None):
     p.add_argument("--steps", type=int, default=None, help="POL steps (default: config)")
     p.add_argument("--baseline-steps", type=int, default=3000)
     p.add_argument("--M", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None, help="POL event batch (default: config; lower on a shared GPU)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args(argv)
-    cfg = load_config(a.config, {"model.M": a.M} if a.M else None)
+    overrides = {**({"model.M": a.M} if a.M else {}), **({"train.batch_size": a.batch_size} if a.batch_size else {})}
+    cfg = load_config(a.config, overrides or None)
     a.steps = a.steps or cfg["train"]["steps"]
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
