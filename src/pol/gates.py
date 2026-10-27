@@ -7,7 +7,7 @@ Unit: a gripper event with a re-encounter whose outcome is a gate target (`label
 hidden at decision time — broken battery, cube behind the bin; any failure on the revealed control).
 Scores of "this event is positive":
   POL           posterior after the event's own view and its re-encounter view, mapped to P(target) with
-                P(target | z) estimated on train events (evaluator-only calibration, not used by the policy)
+                P(target | z) estimated per task on train events (evaluator-only calibration, not used by the policy)
   Markov        the memoryless label-trained classifier on the frame + proprio just after the re-encounter
   POL shuffled  the event's views (v1, v2) swapped with another event of the same task and kind, context and
                 actions kept: what is left without the event's own evidence (G1 control). Fake actions are
@@ -74,6 +74,23 @@ def shuffle_evidence(items):
     return [{**it, **{k: items[j][k] for k in VIEWS}} for it, j in zip(items, src)]
 
 
+def calibrate(q, items, tasks):
+    """P(target | z) per task from train posteriors q [N, M]: the target means a different thing in each task
+    (broken battery, cube behind the bin, ...), so one mapping pooled over tasks would mix them."""
+    M = q.shape[1]
+    out = {}
+    for t in tasks:
+        m = np.array([it["task"] == t for it in items], bool)
+        y = np.array([it["target"] for it in items], float)[m] if m.any() else np.zeros(0)
+        out[t] = (q[m] * y[:, None]).sum(0) / (q[m].sum(0) + 1e-6) if m.any() else np.full(M, 0.5)
+    return out
+
+
+def readout(q, items, p_target_z):
+    """Score of each event = its posterior against its own task's P(target | z)."""
+    return np.array([qi @ p_target_z[it["task"]] for qi, it in zip(q, items)])
+
+
 @torch.no_grad()
 def posterior(model, items, fake=False, seed=0):
     from .data import collate_events
@@ -108,9 +125,7 @@ def compute_scores(pol_dir, markov_dir, data, features, tasks):
     pol = load_assets(pol_dir, features)
     model = pol["outcome_model"]
     lab_tr = [it for it in tr if it["target"] is not None]
-    q_tr = posterior(model, lab_tr) if lab_tr else np.zeros((0, model.M))
-    y_tr = np.array([it["target"] for it in lab_tr], float)
-    p_target_z = (q_tr * y_tr[:, None]).sum(0) / (q_tr.sum(0) + 1e-6) if len(lab_tr) else np.full(model.M, 0.5)
+    p_target_z = calibrate(posterior(model, lab_tr) if lab_tr else np.zeros((0, model.M)), lab_tr, tasks)
     markov = load_assets(markov_dir, features).get("markov_head") if markov_dir else None
     proj = __import__("pol.features", fromlist=["PCA"]).PCA.load(Path(features) / "proj50.npz")
 
@@ -118,9 +133,9 @@ def compute_scores(pol_dir, markov_dir, data, features, tasks):
         y = [it["target"] for it in sel]
         g = {"n": len(sel), "failures": int(sum(y))}
         if sel:
-            g["pol"] = _auroc(posterior(model, sel) @ p_target_z, y)
-            g["pol_shuffled"] = _auroc(posterior(model, shuffle_evidence(sel)) @ p_target_z, y)
-            g["pol_fake_actions"] = _auroc(posterior(model, sel, fake=True) @ p_target_z, y)
+            g["pol"] = _auroc(readout(posterior(model, sel), sel, p_target_z), y)
+            g["pol_shuffled"] = _auroc(readout(posterior(model, shuffle_evidence(sel)), sel, p_target_z), y)
+            g["pol_fake_actions"] = _auroc(readout(posterior(model, sel, fake=True), sel, p_target_z), y)
             if markov is not None:
                 X, ym = markov_xy(sel, proj)
                 with torch.no_grad():
@@ -128,7 +143,7 @@ def compute_scores(pol_dir, markov_dir, data, features, tasks):
         return g
 
     gated = [it for it in va if it["target"] is not None and it["has_v2"]]
-    out = {"n_val_events": len(va), "p_target_given_z": p_target_z.round(3).tolist()}
+    out = {"n_val_events": len(va), "p_target_given_z": {t: p.round(3).tolist() for t, p in p_target_z.items()}}
     for group, want in [("unrevealed", False), ("revealed", True)]:
         out[group] = scores([it for it in gated if it["revealed"] == want])
     out["per_task"] = {t: scores([it for it in gated if it["task"] == t]) for t in tasks}

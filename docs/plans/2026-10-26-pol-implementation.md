@@ -198,7 +198,7 @@
 - `gates.py` implements spec §10.1 thresholds exactly; exit code 0 = pass, 2 = fail N1/G1, 3 = fail G2 only.
   *Fix 2026-10-28:* scored on `labels.GATE_TARGET` (broken vs working battery, behind the bin vs in; any failure on
   GatherInject) instead of "failed"; the Markov head is trained on the same target; G1 control = shuffled
-  evidence (`gates.shuffle_evidence`), fake actions reported only; `per_task` scores added.
+  evidence (`gates.shuffle_evidence`), fake actions reported only; `per_task` scores added; P(target | z) calibrated per task.
 - [ ] Tests (`tests/pol/test_gates.py`): synthetic scores reproduce each pass/fail branch; W&B offline smoke (`WANDB_MODE=disabled`) for 50 steps on synthetic data.
 
 ### Task 12: π0 with memory tokens

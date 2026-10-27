@@ -49,6 +49,19 @@ def test_shuffle_evidence_swaps_views_within_task_and_kind():
         assert (src == int(it["v1"][0])) == lone  # never its own views unless it is alone in its group
 
 
+def test_calibration_is_per_task():
+    """z0 means positive in task A and negative in task B: one pooled P(target | z) scores both at chance."""
+    from pol.gates import _auroc, calibrate, readout
+
+    items = [{"task": t, "target": y} for t in "AB" for y in (True, False) * 10]
+    q = np.array([[1.0, 0.0] if (it["target"] == (it["task"] == "A")) else [0.0, 1.0] for it in items])
+    p = calibrate(q, items, ["A", "B"])
+    assert p["A"][0] > 0.9 and p["B"][0] < 0.1
+    for t in "AB":
+        sel = [i for i, it in enumerate(items) if it["task"] == t]
+        assert _auroc(readout(q[sel], [items[i] for i in sel], p), [items[i]["target"] for i in sel]) == 1.0
+
+
 def write_dataset(root, n_eps=12, T=140, seed=0):
     """SealedBin-3-shaped episodes: grasp, release over the bin, re-encounter; outcome in the logs."""
     from pol.features import PCA, FeatureStore
