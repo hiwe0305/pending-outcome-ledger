@@ -267,7 +267,7 @@ def main(argv=None):
     task_cfgs = {t: load_config(ROOT / f"configs/pol/tasks/{t}.yaml") for t in a.tasks}
     prov = provenance(cfg, ROOT, {"variant": a.variant, "tasks": a.tasks, "seed": a.seed,
                                   "task_configs": task_cfgs})
-    run = init_run("stage_a", a.variant, cfg, prov, K=8, seed=a.seed, log_every=cfg["train"]["log_every"])
+    run = init_run("stage_a", a.variant, cfg, prov, K=8, seed=a.seed, log_every=cfg["train"]["log_every"], out_dir=a.out)
     items_tr = stage_a_items(a.data, store, a.tasks, "train", task_cfgs)
     items_va = stage_a_items(a.data, store, a.tasks, "val", task_cfgs)
     metrics = {"events_train": len(items_tr), "events_val": len(items_va)}
