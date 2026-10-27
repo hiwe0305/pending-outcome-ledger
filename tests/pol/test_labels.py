@@ -1,7 +1,7 @@
 import numpy as np
 
 from pol.events import Event
-from pol.labels import OUTCOMES, event_outcomes
+from pol.labels import OUTCOMES, event_observable, event_outcomes
 
 
 def bin_logs(T, release_t, cube, final_loc, n=3):
@@ -40,3 +40,18 @@ def test_battery_insert_outcomes():
     assert OUTCOMES["batteries_sort"][event_outcomes("batteries_sort", ev, battery_logs(50, 21, "insert", False))[0]] == "seated_broken"
     assert OUTCOMES["batteries_sort"][event_outcomes("batteries_sort", ev, battery_logs(50, 22, "spill", True))[0]] == "spill"
     assert event_outcomes("batteries_sort", ev, battery_logs(50, 45, "insert", True)) == [None]
+
+
+def test_slip_during_transport_labels_the_following_r0():
+    """GatherInject slip (pilot episode 3): the cube leaves the gripper mid-transport (sim release at t=107),
+    the gripper closes on nothing and the FSM reports R0 at t=126, not R+."""
+    ev = [Event(90, "G+", np.zeros(3)), Event(126, "R0", np.zeros(3)), Event(160, "G+", np.zeros(3))]
+    out = event_outcomes("gather_inject", ev, bin_logs(200, 107, 1, 2))
+    assert [None if o is None else OUTCOMES["gather_inject"][o] for o in out] == [None, "visible_out", None]
+    assert event_observable("gather_inject", ev, bin_logs(200, 107, 1, 2)) == [None, True, None]
+
+
+def test_empty_close_without_release_has_no_outcome():
+    ev = [Event(90, "G+", np.zeros(3)), Event(126, "R0", np.zeros(3))]
+    assert event_outcomes("gather_inject", ev, bin_logs(200, 150, 1, 2)) == [None, None]  # release after the R0
+    assert event_outcomes("gather_inject", ev, bin_logs(200, 60, 1, 2)) == [None, None]   # release before the grasp

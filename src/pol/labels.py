@@ -28,19 +28,33 @@ def _battery(e, logs):
     return None
 
 
-def _bin(e, logs):
-    window = range(max(0, e.t + RELEASE_LAG[0]), min(len(logs), e.t + RELEASE_LAG[1]))
-    cubes = [logs[t]["release_cube"] for t in window if logs[t]["release_cube"] >= 0]
-    if not cubes:
+def _bin(e, logs, since=0):
+    """R+: the cube released at the gripper opening. R0: a cube that left the gripper while it was still
+    loaded (a slip during transport: the gripper then closes on nothing and only reports R0 when it
+    reopens), i.e. released after the previous event `since`; its location is read SETTLE steps after
+    that release."""
+    if e.kind == "R+":
+        window = range(max(0, e.t + RELEASE_LAG[0]), min(len(logs), e.t + RELEASE_LAG[1]))
+    else:
+        window = range(max(0, since), min(len(logs), e.t + RELEASE_LAG[1]))
+    released = [(t, logs[t]["release_cube"]) for t in window if logs[t]["release_cube"] >= 0]
+    if not released:
         return None
-    t = min(len(logs) - 1, e.t + SETTLE)
-    return _BIN_LOC[logs[t]["cube_location"][cubes[0]]]
+    t_rel, cube = released[0]
+    t = min(len(logs) - 1, (e.t if e.kind == "R+" else t_rel) + SETTLE)
+    return _BIN_LOC[logs[t]["cube_location"][cube]]
 
 
 def event_outcomes(family, events, logs):
-    """Outcome index per event (into OUTCOMES[family]) or None for events without an outcome."""
-    fn = _battery if family == "batteries_sort" else _bin
-    return [fn(e, logs) if e.kind == "R+" else None for e in events]
+    """Outcome index per event (into OUTCOMES[family]) or None for events without an outcome.
+    BatteriesSort: R+ only. Bins: R+, and R0 after a slip (see _bin)."""
+    out = []
+    for i, e in enumerate(events):
+        if family == "batteries_sort":
+            out.append(_battery(e, logs) if e.kind == "R+" else None)
+        else:
+            out.append(_bin(e, logs, events[i - 1].t + 1 if i else 0) if e.kind in ("R+", "R0") else None)
+    return out
 
 
 def event_observable(family, events, logs, post=16):
@@ -48,18 +62,15 @@ def event_observable(family, events, logs, post=16):
     occluder (False), or not an outcome event (None)? BatteriesSort: the lamp shutter; SealedBin: the
     lid shutter. GatherInject has no occluder, so its outcome events are all visible."""
     out = []
-    for e in events:
-        if e.kind != "R+":
+    for e, o in zip(events, event_outcomes(family, events, logs)):
+        if o is None:
             out.append(None)
             continue
         window = logs[max(0, e.t + RELEASE_LAG[0]):min(len(logs), e.t + post)]
         if family == "batteries_sort":
-            if _battery(e, logs) is None:
-                out.append(None)
-                continue
             out.append(not any(r.get("lamp_occluded") for r in window))
         elif family == "sealed_bin":
-            out.append(None if _bin(e, logs) is None else not any(r.get("shutter") for r in window))
+            out.append(not any(r.get("shutter") for r in window))
         else:
-            out.append(None if _bin(e, logs) is None else True)
+            out.append(True)
     return out
