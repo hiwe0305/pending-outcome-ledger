@@ -40,7 +40,7 @@ def test_stage_defaults_match_spec():
     a = load_config(ROOT / "configs/pol/stage_a.yaml")
     assert a["model"]["M"] == 6 and a["model"]["tau"] == 0.1
     assert a["train"] == {"lr": 3e-4, "weight_decay": 0.01, "batch_size": 512, "steps": 20000,
-                          "warmup": 1000, "lam_g": 1.0, "lam_u": 0.1, "lam_i": 1.0, "hard_negatives": 32,
+                          "warmup": 1000, "lam_g": 1.0, "lam_u": 0.1, "lam_i": 1.0, "lam_i1": 1.0, "hard_negatives": 32,
                           "log_every": 20, "val_every": 1000, "seed": 0}
     b = load_config(ROOT / "configs/pol/stage_b.yaml")
     assert b["model"]["action_horizon"] == 16 and b["model"]["exec_steps"] == 8

@@ -138,11 +138,12 @@ Mô-đun:
 Huấn luyện EM (offline, chỉ trên feature):
 - Posterior (inference, ledger): `q(z_j) ∝ p(z|c,a)·exp(s1(v1,z)+s2(v2,z))` (liệt kê M). Event không có re-encounter: chỉ dùng s1.
 - E-step target khi train: `q_v(z_j) ∝ exp(s1+s2)` — **chỉ từ view**; prior được chưng cất từ q_v. (Nếu đưa prior vào target, prior thấy một nhiễu cân bằng trong context — ví dụ vùng outcome có bị che không — và khóa cụm theo nhiễu đó.)
-- M-step loss = `−Σ_z q_v(z)[log p(z|c,a)] + InfoNCE_1 + InfoNCE_2 + λ_g (Σ_z q(z)‖ĝ(z)−v̄1‖² + scene) + λ_u KL(q̄‖Uniform) − λ_i I(z1; z2)`,
+- M-step loss = `−Σ_z q_v(z)[log p(z|c,a)] + InfoNCE_1 + InfoNCE_2 + λ_g (Σ_z q(z)‖ĝ(z)−v̄1‖² + scene) + λ_u KL(q̄‖Uniform) − λ_i I(z1; z2) − λ_i1 I(z1a; z1b)`,
   trong đó InfoNCE_k lấy trọng số q_v, và `I(z1; z2)` là mutual information kiểu IIC (Ji et al. 2019) giữa `softmax(s1)` và `softmax(s2)` trên các event có re-encounter (hai view của cùng một outcome). Lý do: với u_z chung cho mọi event và q đều, InfoNCE đạt cực đại khi score phẳng (Jensen), nên một mình nó không chọn được phân hoạch; sự đồng thuận giữa hai view thì chọn được.
+  *Sửa 2026-10-28:* `I(z1; z2)` chỉ thưởng cho cái mà cả hai view cùng thấy, mà lỗi im lặng thì theo thiết kế không có ở v2 (lamp BatteriesSort đã tắt lúc gặp lại; round 1: POL 0.56 trong khi probe tuyến tính trên v1 đạt 0.93). Thêm `I(z1a; z1b)`: IIC giữa hai augmentation ngẫu nhiên của chính v1 (bỏ ngẫu nhiên khối thời gian và token, nhiễu feature).
   InfoNCE: dương = (v của chính event, z), âm = v của 63 event khác trong batch, trong đó 32 là **hard negative** cùng loại event, context gần nhất (kNN trên g(c), cập nhật mỗi 1k bước).
 - M ∈ {2,4,6,8}, chọn theo **val InfoNCE + log-likelihood** (không dùng nhãn). Mặc định M=6.
-- λ_g=1.0, λ_u=0.1, λ_i=1.0. AdamW lr 3e-4, wd 0.01, batch 512 event, 20k bước, warmup 1k + cosine. ~1–2 GPU-h (chạy được trên 3050 với batch 128).
+- λ_g=1.0, λ_u=0.1, λ_i=1.0, λ_i1=1.0. AdamW lr 3e-4, wd 0.01, batch 512 event, 20k bước, warmup 1k + cosine. ~1–2 GPU-h (chạy được trên 3050 với batch 128).
 
 ### 6.3 Observability và trạng thái
 - `ω_j = Σ_p Σ_z p(z|c,a)‖ĝ_p(z)−ḡ_p‖²/σ_p²` (σ_p² = variance patch trên train).

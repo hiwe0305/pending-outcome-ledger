@@ -31,7 +31,7 @@ def test_shapes_and_posterior_normalised():
     m = OutcomeModel(**SMALL)
     batch, _, _ = synthetic(32)
     out = em_step(m, batch)
-    assert set(out) >= {"loss", "prior_nll", "nce1", "nce2", "recon", "scene", "usage_kl", "view_mi", "assoc", "q"}
+    assert set(out) >= {"loss", "prior_nll", "nce1", "nce2", "recon", "scene", "usage_kl", "view_mi", "v1_mi", "assoc", "q"}
     assert out["q"].shape == (32, 2) and torch.allclose(out["q"].sum(1), torch.ones(32))
     assert not out["q"].requires_grad and out["loss"].requires_grad
     ctx = m.context(batch["pooled"], batch["act"])
@@ -108,6 +108,56 @@ def test_em_uses_outcome_when_context_identifies_each_event():
     ent = -(q * np.log(np.clip(q, 1e-8, None))).sum(1).mean()
     assert ent < 0.5 * np.log(2)
     assert normalized_mutual_info_score(z, q.argmax(1)) > 0.8
+
+
+def flash(n, seed=0, d=16, n_tok=4):
+    """BatteriesSort-like: the outcome shows only in the first time block of v1 (a lamp flash); the
+    re-encounter view v2 shows the same scene but not the outcome. The context identifies each event."""
+    g = torch.Generator().manual_seed(seed)
+    z = torch.randint(0, 2, (n,), generator=g)
+    pattern = torch.randn(2, n_tok, d, generator=torch.Generator().manual_seed(123))
+    sig = torch.randn(n, 2, d, generator=g) * 2.0
+    leak = (sig[:, :1].expand(-1, n_tok, -1) * 1.5)[:, None].expand(-1, 2, -1, -1)
+    noise = lambda: 0.3 * torch.randn(n, 2, n_tok, d, generator=g)  # noqa: E731
+    v1 = leak + noise()
+    v1[:, 0] += pattern[z]
+    batch = dict(pooled=sig, act=torch.randn(n, 16, 7, generator=g), v1=v1, v2=leak + noise(),
+                 w2=torch.randn(n, 16, generator=g), has_v2=torch.ones(n, dtype=torch.bool),
+                 pooled2=sig + 0.05 * torch.randn(n, 2, d, generator=g), kind=torch.zeros(n, dtype=torch.long))
+    return batch, z.numpy()
+
+
+def train_nmi(gen, steps, n_time=1, **lams):
+    torch.manual_seed(0)
+    m = OutcomeModel(**{**SMALL, "n_time": n_time})
+    opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+    for step in range(steps):
+        out = em_step(m, gen(128, seed=step)[0], **lams)
+        opt.zero_grad()
+        out["loss"].backward()
+        opt.step()
+    batch, z = gen(512, seed=10_000)[:2]
+    with torch.no_grad():
+        q = em_step(m, batch, **lams)["q"].numpy()
+    return normalized_mutual_info_score(z, q.argmax(1))
+
+
+def test_v1_iic_finds_an_outcome_absent_from_the_re_encounter():
+    """Regression for round 1 (BatteriesSort 0.56 vs a v1 probe at 0.93): I(z1; z2) between v1 and v2 can
+    only reward what both views show (NMI 0 here); IIC between two augmentations of v1 does not need v2.
+    Kept next to the v1/v2 term (config lam_i = lam_i1 = 1), it must not break the observability case."""
+    lams = dict(lam_i=1.0, lam_i1=1.0)
+    assert train_nmi(flash, 900, n_time=2, **lams) > 0.8
+    assert train_nmi(synthetic, 900, **lams) > 0.8
+
+
+def test_augment_view_keeps_shape_and_at_least_one_time_block():
+    from pol.outcome_model import augment_view
+
+    x = torch.ones(64, 4, 8, 16)
+    y = augment_view(x, noise=0.0)
+    assert y.shape == x.shape
+    assert (y.abs().sum((2, 3)) > 0).any(1).all()
 
 
 def test_banked_posteriors_are_normalised():

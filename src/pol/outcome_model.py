@@ -15,7 +15,9 @@ enters the prior and the predicted post features.
 InfoNCE alone does not pick a partition: with u_z shared across events and q uniform, its optimum is a
 flat score (Jensen), so EM stays at the symmetric point. Paired views do: v1 and v2 of an event show the
 same outcome, so the M-step also maximises I(z1; z2) between the per-view posteriors (IIC, Ji et al.
-2019), on events with a re-encounter.
+2019), on events with a re-encounter. That term rewards only what both views show, and a silent outcome
+is absent from v2 by design (the BatteriesSort lamp is off at the re-encounter), so lam_i1 adds IIC
+between two random augmentations of v1 itself (time-block and token dropout, feature noise).
 """
 
 import math
@@ -46,6 +48,16 @@ def paired_mi(q1, q2):
     P = (q1.T @ q2) / q1.shape[0]
     P = ((P + P.T) / 2).clamp_min(1e-8)
     return (P * (P.log() - P.sum(1, keepdim=True).log() - P.sum(0, keepdim=True).log())).sum()
+
+
+def augment_view(x, p_block=0.25, p_tok=0.25, noise=0.1):
+    """Random view of a residual view [B, T, N, d]: whole time blocks dropped (at least one kept), tokens
+    dropped, Gaussian noise at `noise` x the batch std. Dropped = zero = as predicted by the scene."""
+    B, T, N, _ = x.shape
+    keep_t = torch.rand(B, T, device=x.device) >= p_block
+    keep_t[torch.arange(B, device=x.device), torch.randint(T, (B,), device=x.device)] = True
+    keep = keep_t[:, :, None] & (torch.rand(B, T, N, device=x.device) >= p_tok)
+    return x * keep[..., None] + noise * x.detach().std() * torch.randn_like(x)
 
 
 class ViewEncoder(nn.Module):
@@ -107,9 +119,9 @@ class OutcomeModel(nn.Module):
         """[B, n_tok, d_tok]: the view predicted from its own pre-window alone (no action, no outcome)."""
         return self.scene[which - 1](pooled.flatten(1)).view(-1, self.n_tok, self.d_tok)
 
-    def view_embed(self, v, pooled, which, w2=None):
+    def view_embed(self, v, pooled, which, w2=None, aug=False):
         resid = v - self.scene_mean(pooled, which).detach()[:, None]
-        return self.view[which - 1](resid, w2 if which == 2 else None)
+        return self.view[which - 1](augment_view(resid) if aug else resid, w2 if which == 2 else None)
 
     def scores(self, f, u):
         """[B, B', M]: score of candidate view c under hypothesis z of event b."""
@@ -162,7 +174,7 @@ def _nce(S):
     return own - (torch.logsumexp(S, 1) - math.log(S.shape[1]))
 
 
-def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0):
+def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0):
     ctx = model.context(batch["pooled"], batch["act"])
     prior = torch.log_softmax(model.prior_logits(ctx), -1)
     f1 = model.view_embed(batch["v1"], batch["pooled"], 1)
@@ -187,11 +199,17 @@ def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0):
     ukl = usage_kl(joint.softmax(-1))
     pair = batch["has_v2"]
     mi = paired_mi(ll1[pair].softmax(-1), ll2[pair].softmax(-1)) if pair.sum() > 1 else ll1.new_zeros(())
+    mi1 = ll1.new_zeros(())
+    if lam_i1:
+        u1 = model.hyp_embed(batch["kind"], 1)
+        qa, qb = (_nce(model.scores(model.view_embed(batch["v1"], batch["pooled"], 1, aug=True), u1)).softmax(-1)
+                  for _ in range(2))
+        mi1 = paired_mi(qa, qb)
     a1, a2 = model.assoc_embed(batch["pooled"]), model.assoc_embed(batch["pooled2"])
     logits = a1 @ a2.T / model.tau
     labels = torch.arange(len(a1), device=a1.device)
     assoc = (F.cross_entropy(logits, labels, reduction="none") * has2[:, 0]).sum() / n2
-    loss = prior_nll + nce1 + nce2 + lam_g * (recon + scene) + lam_u * ukl - lam_i * mi + lam_a * assoc
+    loss = prior_nll + nce1 + nce2 + lam_g * (recon + scene) + lam_u * ukl - lam_i * mi - lam_i1 * mi1 + lam_a * assoc
     return {"loss": loss, "prior_nll": prior_nll.detach(), "nce1": nce1.detach(), "nce2": nce2.detach(),
             "recon": recon.detach(), "scene": scene.detach(), "usage_kl": ukl.detach(), "view_mi": mi.detach(),
-            "assoc": assoc.detach(), "q": q}
+            "v1_mi": mi1.detach(), "assoc": assoc.detach(), "q": q}
