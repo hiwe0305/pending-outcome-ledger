@@ -105,7 +105,16 @@ def collate_events(items):
     batch = {k: torch.as_tensor(np.stack([it[k] for it in items])) for k in keys}
     batch["has_v2"] = torch.as_tensor([it["has_v2"] for it in items])
     batch["kind"] = torch.as_tensor([KINDS.index(it["kind"]) for it in items])
+    batch["group"] = torch.as_tensor([event_group(it.get("task", ""), it["kind"]) for it in items])
     return batch
+
+
+def event_group(task, kind):
+    """Stable id of a task:kind group, for the outcome model's clustering within a group. The task is known to
+    the policy from its instruction, so this is not a label."""
+    import zlib
+
+    return zlib.crc32(f"{task}:{kind}".encode()) & 0x7FFFFFFF
 
 
 # ------------------------------------------------------------ memory replay

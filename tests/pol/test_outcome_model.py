@@ -151,6 +151,65 @@ def test_v1_iic_finds_an_outcome_absent_from_the_re_encounter():
     assert train_nmi(synthetic, 900, **lams) > 0.8
 
 
+def two_tasks(n, seed=0, d=16, n_tok=4):
+    """Two tasks whose post-event views differ by a large task signature (not predictable from the
+    pre-window); within each task the outcome is a smaller pattern, in both views. Unconditional IIC
+    spends z on the task (the larger variation), as POL did on round 1."""
+    g = torch.Generator().manual_seed(seed)
+    task, z = torch.randint(0, 2, (n,), generator=g), torch.randint(0, 2, (n,), generator=g)
+    task_sig = torch.randn(2, n_tok, d, generator=torch.Generator().manual_seed(5)) * 3.0
+    pattern = torch.randn(2, n_tok, d, generator=torch.Generator().manual_seed(123))
+    noise = lambda: 0.3 * torch.randn(n, 1, n_tok, d, generator=g)  # noqa: E731
+    show = (task_sig[task] + pattern[z])[:, None]
+    pooled = torch.randn(n, 2, d, generator=g)
+    batch = dict(pooled=pooled, act=torch.randn(n, 16, 7, generator=g), v1=show + noise(), v2=show + noise(),
+                 w2=torch.randn(n, 16, generator=g), has_v2=torch.ones(n, dtype=torch.bool),
+                 pooled2=pooled + 0.05 * torch.randn(n, 2, d, generator=g), kind=torch.zeros(n, dtype=torch.long),
+                 group=task)
+    return batch, z.numpy(), task.numpy()
+
+
+def test_iic_within_task_and_kind_finds_the_outcome_not_the_task():
+    torch.manual_seed(0)
+    m = OutcomeModel(**SMALL)
+    opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+    for step in range(300):
+        out = em_step(m, two_tasks(128, seed=step)[0])
+        opt.zero_grad()
+        out["loss"].backward()
+        opt.step()
+    batch, z, task = two_tasks(512, seed=10_000)
+    with torch.no_grad():
+        q = em_step(m, batch)["q"].numpy().argmax(1)
+    for t in (0, 1):  # cluster ids may differ between tasks: score within each
+        assert normalized_mutual_info_score(z[task == t], q[task == t]) > 0.8
+
+
+def test_grouped_mi_is_the_size_weighted_mean_over_groups():
+    from pol.outcome_model import grouped_mi, paired_mi
+
+    q = torch.eye(2)[torch.tensor([0, 1, 0, 1, 0, 0])]
+    group = torch.tensor([0, 0, 0, 0, 1, 1])
+    want = 4 / 6 * paired_mi(q[:4], q[:4]) + 2 / 6 * paired_mi(q[4:], q[4:])
+    assert torch.allclose(grouped_mi(q, q, group), want)
+    assert torch.allclose(grouped_mi(q, q, None), paired_mi(q, q))
+
+
+def test_bank_normaliser_uses_the_event_group_only():
+    torch.manual_seed(0)
+    m = OutcomeModel(**SMALL).eval()
+    batch, _, task = two_tasks(64)
+    keep = torch.as_tensor(task == 1)
+    with torch.no_grad():
+        m.set_banks({k: v[keep] for k, v in batch.items()})
+        only = m.log_posterior_v1(batch["pooled"][:8], batch["act"][:8], batch["v1"][:8], batch["kind"][:8])
+        m.set_banks(batch)
+        g = torch.ones(8, dtype=torch.long)
+        grouped = m.log_posterior_v1(batch["pooled"][:8], batch["act"][:8], batch["v1"][:8], batch["kind"][:8], g)
+        pooled = m.log_posterior_v1(batch["pooled"][:8], batch["act"][:8], batch["v1"][:8], batch["kind"][:8])
+    assert torch.allclose(grouped, only, atol=1e-5) and not torch.allclose(pooled, only, atol=1e-3)
+
+
 def test_augment_view_keeps_shape_and_at_least_one_time_block():
     from pol.outcome_model import augment_view
 

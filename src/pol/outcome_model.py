@@ -18,6 +18,10 @@ same outcome, so the M-step also maximises I(z1; z2) between the per-view poster
 2019), on events with a re-encounter. That term rewards only what both views show, and a silent outcome
 is absent from v2 by design (the BatteriesSort lamp is off at the re-encounter), so lam_i1 adds IIC
 between two random augmentations of v1 itself (time-block and token dropout, feature noise).
+
+All of it is conditional on the event's task:kind group (`batch["group"]`, the task is known from the
+instruction): InfoNCE candidates and inference bank views of the same group only, IIC within each group.
+Unconditional, z spends its M values on telling the tasks apart, the largest variation in the views.
 """
 
 import math
@@ -48,6 +52,20 @@ def paired_mi(q1, q2):
     P = (q1.T @ q2) / q1.shape[0]
     P = ((P + P.T) / 2).clamp_min(1e-8)
     return (P * (P.log() - P.sum(1, keepdim=True).log() - P.sum(0, keepdim=True).log())).sum()
+
+
+def grouped_mi(q1, q2, group=None):
+    """I(z1; z2 | group): paired_mi within each group (same task and event kind), weighted by group size.
+    Pooled over tasks, the uniform-marginal part of IIC is maximised by spending z on the task; within a
+    group it has to come from what differs between that group's events. None = one group."""
+    if group is None:
+        return paired_mi(q1, q2)
+    total = q1.new_zeros(())
+    for g in group.unique():
+        m = group == g
+        if m.sum() > 1:
+            total = total + m.float().mean() * paired_mi(q1[m], q2[m])
+    return total
 
 
 def augment_view(x, p_block=0.25, p_tok=0.25, noise=0.1):
@@ -96,6 +114,8 @@ class OutcomeModel(nn.Module):
         self.assoc_head = nn.Linear(2 * d_feat, d_assoc)
         self.register_buffer("bank1", torch.zeros(0, d_tok))
         self.register_buffer("bank2", torch.zeros(0, d_tok))
+        self.register_buffer("bank1_group", torch.zeros(0, dtype=torch.long))  # task:kind of each bank view
+        self.register_buffer("bank2_group", torch.zeros(0, dtype=torch.long))
 
     # ------------------------------------------------------------------ pieces
     def context(self, pooled, act):
@@ -147,31 +167,57 @@ class OutcomeModel(nn.Module):
     # ------------------------------------------------------------- inference
     @torch.no_grad()
     def set_banks(self, batch, max_size=4096):
+        """Reference views for the inference normaliser; pass a random sample of all tasks (an ordered list
+        cut at max_size can leave a task out)."""
+        g = batch.get("group", torch.zeros(len(batch["v1"]), dtype=torch.long))[:max_size]
         self.bank1 = self.view_embed(batch["v1"][:max_size], batch["pooled"][:max_size], 1)
+        self.bank1_group = g.clone()
         keep = batch["has_v2"][:max_size]
         self.bank2 = self.view_embed(batch["v2"][:max_size][keep], batch["pooled2"][:max_size][keep], 2,
                                      batch["w2"][:max_size][keep])
+        self.bank2_group = g[keep].clone()
 
-    def _banked_loglik(self, f, u, bank):
+    def _banked_loglik(self, f, u, bank, group=None, bank_group=None):
         own = torch.einsum("bmd,bd->bm", u, f) / self.tau
         ref = torch.einsum("bmd,cd->bcm", u, bank) / self.tau
-        return own - (torch.logsumexp(ref, 1) - math.log(bank.shape[0]))
+        return own - _log_mean_exp(ref, _same_group(group, bank_group, len(f), len(bank)))
 
-    def log_posterior_v1(self, pooled, act, v1, kind):
+    def log_posterior_v1(self, pooled, act, v1, kind, group=None):
+        """group: task:kind ids (data.event_group) to normalise against bank views of the same group; None
+        (no task at hand) = the whole bank."""
         ctx = self.context(pooled, act)
-        ll = self._banked_loglik(self.view_embed(v1, pooled, 1), self.hyp_embed(kind, 1), self.bank1)
+        ll = self._banked_loglik(self.view_embed(v1, pooled, 1), self.hyp_embed(kind, 1), self.bank1,
+                                 group, self.bank1_group)
         return torch.log_softmax(self.prior_logits(ctx) + ll, -1)
 
-    def loglik_v2(self, v2, w2, pooled2, kind_j):
+    def loglik_v2(self, v2, w2, pooled2, kind_j, group=None):
         """Log-likelihood ratio of a re-encounter view (pre-window pooled2) under each hypothesis of the
-        original event j (of kind_j)."""
-        return self._banked_loglik(self.view_embed(v2, pooled2, 2, w2), self.hyp_embed(kind_j, 2), self.bank2)
+        original event j (of kind_j, group = its task:kind)."""
+        return self._banked_loglik(self.view_embed(v2, pooled2, 2, w2), self.hyp_embed(kind_j, 2), self.bank2,
+                                   group, self.bank2_group)
 
 
-def _nce(S):
-    """Per-hypothesis InfoNCE log-ratio of each event's own view against the in-batch candidates."""
+def _same_group(group, cand_group, n, n_cand):
+    """[n, n_cand] mask of candidates in the event's own group; rows with none fall back to all candidates."""
+    if group is None or cand_group is None or len(cand_group) != n_cand:
+        return None
+    mask = group[:, None] == cand_group[None, :]
+    return mask | ~mask.any(1, keepdim=True)
+
+
+def _log_mean_exp(S, mask=None):
+    """log mean_c exp S[b, c, m] over candidates c (only those in mask[b, c])."""
+    if mask is None:
+        return torch.logsumexp(S, 1) - math.log(S.shape[1])
+    S = S.masked_fill(~mask[..., None], float("-inf"))
+    return torch.logsumexp(S, 1) - mask.sum(1, keepdim=True).float().log()
+
+
+def _nce(S, group=None):
+    """Per-hypothesis InfoNCE log-ratio of each event's own view against the in-batch candidates of its own
+    task:kind group: against all candidates, a hypothesis gains most by telling the tasks apart."""
     own = torch.diagonal(S, dim1=0, dim2=1).T  # [B, M]
-    return own - (torch.logsumexp(S, 1) - math.log(S.shape[1]))
+    return own - _log_mean_exp(S, _same_group(group, group, S.shape[0], S.shape[1]))
 
 
 def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0):
@@ -179,8 +225,9 @@ def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0
     prior = torch.log_softmax(model.prior_logits(ctx), -1)
     f1 = model.view_embed(batch["v1"], batch["pooled"], 1)
     f2 = model.view_embed(batch["v2"], batch["pooled2"], 2, batch["w2"])
-    ll1 = _nce(model.scores(f1, model.hyp_embed(batch["kind"], 1)))
-    ll2 = _nce(model.scores(f2, model.hyp_embed(batch["kind"], 2)))
+    group = batch.get("group")  # task:kind; None = one group
+    ll1 = _nce(model.scores(f1, model.hyp_embed(batch["kind"], 1)), group)
+    ll2 = _nce(model.scores(f2, model.hyp_embed(batch["kind"], 2)), group)
     has2 = batch["has_v2"].float()[:, None]
     joint = prior + ll1 + has2 * ll2
     q = joint.softmax(-1).detach()  # posterior, as used at inference
@@ -198,13 +245,14 @@ def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0
     recon = (q[..., None, None] * (model.predict_post(ctx) - target[:, None]) ** 2).mean((-1, -2)).sum(-1).mean()
     ukl = usage_kl(joint.softmax(-1))
     pair = batch["has_v2"]
-    mi = paired_mi(ll1[pair].softmax(-1), ll2[pair].softmax(-1)) if pair.sum() > 1 else ll1.new_zeros(())
+    mi = (grouped_mi(ll1[pair].softmax(-1), ll2[pair].softmax(-1), None if group is None else group[pair])
+          if pair.sum() > 1 else ll1.new_zeros(()))
     mi1 = ll1.new_zeros(())
     if lam_i1:
         u1 = model.hyp_embed(batch["kind"], 1)
-        qa, qb = (_nce(model.scores(model.view_embed(batch["v1"], batch["pooled"], 1, aug=True), u1)).softmax(-1)
+        qa, qb = (_nce(model.scores(model.view_embed(batch["v1"], batch["pooled"], 1, aug=True), u1), group).softmax(-1)
                   for _ in range(2))
-        mi1 = paired_mi(qa, qb)
+        mi1 = grouped_mi(qa, qb, group)
     a1, a2 = model.assoc_embed(batch["pooled"]), model.assoc_embed(batch["pooled2"])
     logits = a1 @ a2.T / model.tau
     labels = torch.arange(len(a1), device=a1.device)

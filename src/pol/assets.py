@@ -39,9 +39,11 @@ def load_assets(stage_a_dir, store_root):
     assets = {"proj50": proj.components.T.astype(np.float64), "proj_mean": proj.mean.astype(np.float64)}
     for name, (cls, kwargs, state) in blob["modules"].items():
         m = CLASSES[cls](**kwargs)
-        for buf in ("bank1", "bank2"):  # reference banks are sized at the end of training
+        for buf in ("bank1", "bank2", "bank1_group", "bank2_group"):  # reference banks are sized at the end of training
             if buf in state:
                 setattr(m, buf, torch.zeros_like(state[buf]))
+            elif buf.endswith("_group") and hasattr(m, buf):  # checkpoints from before the groups: whole bank
+                state[buf] = torch.zeros(0, dtype=torch.long)
         m.load_state_dict(state)
         assets[name] = m.eval()
     assets.update(blob["scalars"])

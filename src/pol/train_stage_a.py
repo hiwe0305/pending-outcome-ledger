@@ -82,7 +82,8 @@ def train_pol(a, cfg, items_tr, items_va, run, device):
         step += 1
     model = model.cpu().eval()
     with torch.no_grad():
-        train_batch = collate_events(items_tr[:4096])
+        pick = np.random.default_rng(a.seed).permutation(len(items_tr))[:4096]  # items are ordered by task
+        train_batch = collate_events([items_tr[i] for i in pick])
         model.set_banks(train_batch)
         v1 = torch.as_tensor(np.stack([it["v1"].mean(0) for it in items_tr]))
         sigma2 = v1.var(0) + 1e-6
