@@ -22,7 +22,7 @@ def synthetic(n, seed=0, d=16, n_tok=4):
     pooled[:, 0, 0] = 3.0 * observable.float()  # the context shows whether the outcome region is visible
     batch = dict(pooled=pooled, act=torch.randn(n, 16, 7, generator=g), v1=v1, v2=v2,
                  w2=torch.randn(n, 16, generator=g), has_v2=torch.ones(n, dtype=torch.bool),
-                 pooled2=pooled + 0.05 * torch.randn(n, 2, d, generator=g))
+                 pooled2=pooled + 0.05 * torch.randn(n, 2, d, generator=g), kind=torch.zeros(n, dtype=torch.long))
     return batch, z.numpy(), observable.numpy()
 
 
@@ -31,7 +31,7 @@ def test_shapes_and_posterior_normalised():
     m = OutcomeModel(**SMALL)
     batch, _, _ = synthetic(32)
     out = em_step(m, batch)
-    assert set(out) >= {"loss", "prior_nll", "nce1", "nce2", "recon", "usage_kl", "assoc", "q"}
+    assert set(out) >= {"loss", "prior_nll", "nce1", "nce2", "recon", "scene", "usage_kl", "view_mi", "assoc", "q"}
     assert out["q"].shape == (32, 2) and torch.allclose(out["q"].sum(1), torch.ones(32))
     assert not out["q"].requires_grad and out["loss"].requires_grad
     ctx = m.context(batch["pooled"], batch["act"])
@@ -68,10 +68,46 @@ def test_em_recovers_outcomes_and_observability():
     assert omega[observable].mean() > 3 * omega[~observable].mean()
     with torch.no_grad():
         m.set_banks(batch)
-        lp1 = m.log_posterior_v1(batch["pooled"], batch["act"], batch["v1"]).numpy()
+        lp1 = m.log_posterior_v1(batch["pooled"], batch["act"], batch["v1"], batch["kind"]).numpy()
     ent = -(np.exp(lp1) * lp1).sum(1)
     assert ent[observable].mean() < ent[~observable].mean()
     assert np.isfinite(omega).all()
+
+
+def identifiable(n, seed=0, d=16, n_tok=4):
+    """Two hidden outcomes seen only in the views; the context is a per-event signature that also
+    shows up in the views (same scene before and after the action), so it identifies each event."""
+    g = torch.Generator().manual_seed(seed)
+    z = torch.randint(0, 2, (n,), generator=g)
+    pattern = torch.randn(2, n_tok, d, generator=torch.Generator().manual_seed(123))
+    sig = torch.randn(n, 2, d, generator=g) * 2.0
+    leak = sig[:, :1].expand(-1, n_tok, -1) * 1.5  # the scene signature, visible in every view token
+    noise = lambda: 0.3 * torch.randn(n, 1, n_tok, d, generator=g)  # noqa: E731
+    batch = dict(pooled=sig, act=torch.randn(n, 16, 7, generator=g),
+                 v1=(pattern[z] + leak)[:, None] + noise(), v2=(pattern[z] + leak)[:, None] + noise(),
+                 w2=torch.randn(n, 16, generator=g), has_v2=torch.ones(n, dtype=torch.bool),
+                 pooled2=sig + 0.05 * torch.randn(n, 2, d, generator=g), kind=torch.zeros(n, dtype=torch.long))
+    return batch, z.numpy()
+
+
+def test_em_uses_outcome_when_context_identifies_each_event():
+    """Regression for the pilot collapse (q uniform, z unused): with a context-dependent hypothesis
+    embedding the score matches each event's own view through its context alone."""
+    torch.manual_seed(0)
+    m = OutcomeModel(**SMALL)
+    opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+    for step in range(300):
+        batch, _ = identifiable(128, seed=step)
+        out = em_step(m, batch)
+        opt.zero_grad()
+        out["loss"].backward()
+        opt.step()
+    batch, z = identifiable(512, seed=10_000)
+    with torch.no_grad():
+        q = em_step(m, batch)["q"].numpy()
+    ent = -(q * np.log(np.clip(q, 1e-8, None))).sum(1).mean()
+    assert ent < 0.5 * np.log(2)
+    assert normalized_mutual_info_score(z, q.argmax(1)) > 0.8
 
 
 def test_banked_posteriors_are_normalised():
@@ -80,7 +116,7 @@ def test_banked_posteriors_are_normalised():
     batch, _, _ = synthetic(64)
     with torch.no_grad():
         m.set_banks(batch)
-        lp1 = m.log_posterior_v1(batch["pooled"], batch["act"], batch["v1"])
-        ll2 = m.loglik_v2(batch["pooled"], batch["act"], batch["v2"], batch["w2"])
+        lp1 = m.log_posterior_v1(batch["pooled"], batch["act"], batch["v1"], batch["kind"])
+        ll2 = m.loglik_v2(batch["v2"], batch["w2"], batch["pooled2"], batch["kind"])
     assert torch.allclose(lp1.exp().sum(1), torch.ones(64), atol=1e-5)
     assert ll2.shape == (64, 2) and torch.isfinite(ll2).all()

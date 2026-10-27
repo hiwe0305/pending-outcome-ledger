@@ -17,6 +17,7 @@ train:
   warmup: 1000
   lam_g: 1.0
   lam_u: 0.1
+  lam_i: 1.0
   hard_negatives: 32
   log_every: 20
   val_every: 1000

@@ -69,8 +69,8 @@ def posterior(model, items, fake=False, seed=0):
             idx = np.where(kinds == k)[0]
             perm[idx] = rng.permutation(idx)
         act = act[torch.as_tensor(perm)]
-    lp = model.log_posterior_v1(b["pooled"], act, b["v1"])
-    ll2 = model.loglik_v2(b["pooled"], act, b["v2"], b["w2"])
+    lp = model.log_posterior_v1(b["pooled"], act, b["v1"], b["kind"])
+    ll2 = model.loglik_v2(b["v2"], b["w2"], b["pooled2"], b["kind"])
     has2 = b["has_v2"].float()[:, None]
     return torch.softmax(lp + has2 * ll2, -1).numpy()
 

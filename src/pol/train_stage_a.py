@@ -66,14 +66,14 @@ def train_pol(a, cfg, items_tr, items_va, run, device):
             continue
         for g in opt.param_groups:
             g["lr"] = lr_at(step, a.steps, min(tc["warmup"], a.steps // 10 + 1), tc["lr"])
-        out = em_step(model, to(collate_events([items_tr[i] for i in idx])), tc["lam_g"], tc["lam_u"])
+        out = em_step(model, to(collate_events([items_tr[i] for i in idx])), tc["lam_g"], tc["lam_u"], lam_i=tc["lam_i"])
         opt.zero_grad()
         out["loss"].backward()
         gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
         q = out["q"]
         marginal = q.mean(0)
-        run.log(step, {"loss": out["loss"].item(), **{k: out[k].item() for k in ("prior_nll", "nce1", "nce2", "recon", "usage_kl", "assoc")},
+        run.log(step, {"loss": out["loss"].item(), **{k: out[k].item() for k in ("prior_nll", "nce1", "nce2", "recon", "scene", "usage_kl", "view_mi", "assoc")},
                        "q_entropy": float(-(q * q.clamp_min(1e-8).log()).sum(1).mean()),
                        "z_used": int((marginal > 0.02).sum()), "lr": opt.param_groups[0]["lr"], "grad_norm": float(gn),
                        "steps_per_s": (step + 1) / (time.time() - t0)})

@@ -10,7 +10,7 @@ import json
 
 import numpy as np
 
-from .events import GripperFSM, detect_events, event_windows, reencounter_index
+from .events import KINDS, GripperFSM, detect_events, event_windows, reencounter_index
 from .memories.base import StepObs
 from .memories.pol import N_TIME, POST, PRE, _blocks
 
@@ -104,6 +104,7 @@ def collate_events(items):
     keys = ["pooled", "act", "v1", "v2", "w2", "pooled2"]
     batch = {k: torch.as_tensor(np.stack([it[k] for it in items])) for k in keys}
     batch["has_v2"] = torch.as_tensor([it["has_v2"] for it in items])
+    batch["kind"] = torch.as_tensor([KINDS.index(it["kind"]) for it in items])
     return batch
 
 

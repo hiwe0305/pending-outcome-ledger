@@ -36,7 +36,8 @@ def pol_assets():
     model = OutcomeModel(M=4).eval()
     with torch.no_grad():
         model.set_banks({"v1": torch.randn(16, 4, 32, 256), "v2": torch.randn(16, 4, 32, 256),
-                         "w2": torch.randn(16, 16), "has_v2": torch.ones(16, dtype=torch.bool)})
+                         "w2": torch.randn(16, 16), "has_v2": torch.ones(16, dtype=torch.bool),
+                         "pooled": torch.randn(16, 2, 1152), "pooled2": torch.randn(16, 2, 1152)})
     rng = np.random.default_rng(0)
     return {"outcome_model": model, "sigma2": torch.ones(32, 256), "omega0": 0.0,
             "proj50": rng.normal(size=(2304, 50)) / 48, "proj_mean": np.zeros(2304)}

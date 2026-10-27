@@ -82,14 +82,14 @@ class PendingOutcomeLedger(MemoryProducer):
         if self.cfg.get("resolve", True) and self.ledger.entries:
             weights = self.ledger.association(ev.x_ee, assoc)
             if weights.any():
-                pj = torch.stack([tt(e.extra["pooled"])[0] for e in self.ledger.entries])
-                aj = torch.stack([tt(e.extra["act"])[0] for e in self.ledger.entries])
+                kj = torch.as_tensor([e.kind for e in self.ledger.entries])
                 n = len(self.ledger.entries)
-                ll = model.loglik_v2(pj, aj, tt(v).expand(n, -1, -1, -1), tt(w).expand(n, -1)).numpy()
+                ll = model.loglik_v2(tt(v).expand(n, -1, -1, -1), tt(w).expand(n, -1), tt(pooled).expand(n, -1, -1), kj).numpy()
                 self.ledger.resolve(weights, ll)
         ctx = model.context(tt(pooled), tt(act))
-        logp = model.log_posterior_v1(tt(pooled), tt(act), tt(v))[0].numpy()
+        kind = KINDS.index(ev.kind)
+        logp = model.log_posterior_v1(tt(pooled), tt(act), tt(v), torch.as_tensor([kind]))[0].numpy()
         omega = float(model.omega(ctx, self.assets["sigma2"])[0]) if self.cfg.get("use_omega", True) else 1.0
-        self.ledger.write(Entry(x=ev.x_ee, kind=KINDS.index(ev.kind), logp=logp, omega=omega, t=ev.t,
+        self.ledger.write(Entry(x=ev.x_ee, kind=kind, logp=logp, omega=omega, t=ev.t,
                                 summary=model.summary(ctx)[0].numpy(), assoc=assoc,
                                 extra={"pooled": pooled, "act": act}))

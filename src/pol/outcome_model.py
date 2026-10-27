@@ -4,6 +4,18 @@ Each event j has a discrete outcome z in {1..M}. View scores are contrastive, so
 exp s(v, z) is proportional to p(v | z, ctx) / p(v | ctx); a density ratio is all Bayes' rule
 over z needs. The normaliser over candidate views is the in-batch set during training and a
 fixed bank of training views at inference (set_banks).
+
+The hypothesis embedding u_z sees only z and the event kind, never the context: views and context come
+from the same scene, so a context-dependent u matches each event's own view through the context alone
+and leaves z unused (instance discrimination). The scene part of a view is explained away instead by a
+regression from the view's own pre-window (scene_mean, plain MSE on frozen features): the encoder sees
+v - scene_mean(pooled), so what is left to cluster is what the context did not predict. The context also
+enters the prior and the predicted post features.
+
+InfoNCE alone does not pick a partition: with u_z shared across events and q uniform, its optimum is a
+flat score (Jensen), so EM stays at the symmetric point. Paired views do: v1 and v2 of an event show the
+same outcome, so the M-step also maximises I(z1; z2) between the per-view posteriors (IIC, Ji et al.
+2019), on events with a re-encounter.
 """
 
 import math
@@ -11,6 +23,8 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
+
+from .events import KINDS
 
 
 def mlp(*dims):
@@ -24,6 +38,14 @@ def usage_kl(q):
     """KL(mean_b q || uniform): penalises collapse onto few hypotheses."""
     marginal = q.mean(0).clamp_min(1e-8)
     return (marginal * (marginal.log() + math.log(q.shape[1]))).sum()
+
+
+def paired_mi(q1, q2):
+    """IIC mutual information I(z1; z2) of two posteriors [B, M] of the same events: high when each is
+    sharp, they agree, and the shared marginal is uniform."""
+    P = (q1.T @ q2) / q1.shape[0]
+    P = ((P + P.T) / 2).clamp_min(1e-8)
+    return (P * (P.log() - P.sum(1, keepdim=True).log() - P.sum(0, keepdim=True).log())).sum()
 
 
 class ViewEncoder(nn.Module):
@@ -54,8 +76,9 @@ class OutcomeModel(nn.Module):
         d = d_ctx + d_act
         self.prior = mlp(d, 256, M)
         self.hyp = nn.Parameter(torch.randn(M, 128) * 0.5)
-        self.hyp_head = nn.ModuleList([mlp(d + 128, 256, d_tok) for _ in range(2)])
+        self.hyp_head = nn.ModuleList([mlp(128 + len(KINDS), 256, d_tok) for _ in range(2)])
         self.view = nn.ModuleList([ViewEncoder(d_tok, n_time, n_tok), ViewEncoder(d_tok, n_time, n_tok, extra=16)])
+        self.scene = nn.ModuleList([mlp(2 * d_feat, 256, n_tok * d_tok) for _ in range(2)])
         self.post_head = mlp(d + 128, 512, n_tok * d_tok)
         self.summary_head = nn.Linear(d, 24)
         self.assoc_head = nn.Linear(2 * d_feat, d_assoc)
@@ -73,11 +96,20 @@ class OutcomeModel(nn.Module):
         b = ctx.shape[0]
         return torch.cat([ctx[:, None].expand(b, self.M, -1), self.hyp[None].expand(b, -1, -1)], -1)
 
-    def hyp_embed(self, ctx, which):
-        return F.normalize(self.hyp_head[which - 1](self._with_hyp(ctx)), dim=-1)
+    def hyp_embed(self, kind, which):
+        """[B, M, d_tok] for event kinds [B] (indices into events.KINDS)."""
+        K = len(KINDS)
+        x = torch.cat([self.hyp[None].expand(K, -1, -1),
+                       torch.eye(K, device=self.hyp.device)[:, None].expand(-1, self.M, -1)], -1)
+        return F.normalize(self.hyp_head[which - 1](x), dim=-1)[kind]
 
-    def view_embed(self, v, which, w2=None):
-        return self.view[which - 1](v, w2 if which == 2 else None)
+    def scene_mean(self, pooled, which):
+        """[B, n_tok, d_tok]: the view predicted from its own pre-window alone (no action, no outcome)."""
+        return self.scene[which - 1](pooled.flatten(1)).view(-1, self.n_tok, self.d_tok)
+
+    def view_embed(self, v, pooled, which, w2=None):
+        resid = v - self.scene_mean(pooled, which).detach()[:, None]
+        return self.view[which - 1](resid, w2 if which == 2 else None)
 
     def scores(self, f, u):
         """[B, B', M]: score of candidate view c under hypothesis z of event b."""
@@ -103,24 +135,25 @@ class OutcomeModel(nn.Module):
     # ------------------------------------------------------------- inference
     @torch.no_grad()
     def set_banks(self, batch, max_size=4096):
-        self.bank1 = self.view_embed(batch["v1"][:max_size], 1)
+        self.bank1 = self.view_embed(batch["v1"][:max_size], batch["pooled"][:max_size], 1)
         keep = batch["has_v2"][:max_size]
-        self.bank2 = self.view_embed(batch["v2"][:max_size][keep], 2, batch["w2"][:max_size][keep])
+        self.bank2 = self.view_embed(batch["v2"][:max_size][keep], batch["pooled2"][:max_size][keep], 2,
+                                     batch["w2"][:max_size][keep])
 
     def _banked_loglik(self, f, u, bank):
         own = torch.einsum("bmd,bd->bm", u, f) / self.tau
         ref = torch.einsum("bmd,cd->bcm", u, bank) / self.tau
         return own - (torch.logsumexp(ref, 1) - math.log(bank.shape[0]))
 
-    def log_posterior_v1(self, pooled, act, v1):
+    def log_posterior_v1(self, pooled, act, v1, kind):
         ctx = self.context(pooled, act)
-        ll = self._banked_loglik(self.view_embed(v1, 1), self.hyp_embed(ctx, 1), self.bank1)
+        ll = self._banked_loglik(self.view_embed(v1, pooled, 1), self.hyp_embed(kind, 1), self.bank1)
         return torch.log_softmax(self.prior_logits(ctx) + ll, -1)
 
-    def loglik_v2(self, pooled_j, act_j, v2, w2):
-        """Log-likelihood ratio of a re-encounter view under each hypothesis of the original event j."""
-        ctx = self.context(pooled_j, act_j)
-        return self._banked_loglik(self.view_embed(v2, 2, w2), self.hyp_embed(ctx, 2), self.bank2)
+    def loglik_v2(self, v2, w2, pooled2, kind_j):
+        """Log-likelihood ratio of a re-encounter view (pre-window pooled2) under each hypothesis of the
+        original event j (of kind_j)."""
+        return self._banked_loglik(self.view_embed(v2, pooled2, 2, w2), self.hyp_embed(kind_j, 2), self.bank2)
 
 
 def _nce(S):
@@ -129,25 +162,36 @@ def _nce(S):
     return own - (torch.logsumexp(S, 1) - math.log(S.shape[1]))
 
 
-def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1):
+def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0):
     ctx = model.context(batch["pooled"], batch["act"])
     prior = torch.log_softmax(model.prior_logits(ctx), -1)
-    ll1 = _nce(model.scores(model.view_embed(batch["v1"], 1), model.hyp_embed(ctx, 1)))
-    ll2 = _nce(model.scores(model.view_embed(batch["v2"], 2, batch["w2"]), model.hyp_embed(ctx, 2)))
+    f1 = model.view_embed(batch["v1"], batch["pooled"], 1)
+    f2 = model.view_embed(batch["v2"], batch["pooled2"], 2, batch["w2"])
+    ll1 = _nce(model.scores(f1, model.hyp_embed(batch["kind"], 1)))
+    ll2 = _nce(model.scores(f2, model.hyp_embed(batch["kind"], 2)))
     has2 = batch["has_v2"].float()[:, None]
     joint = prior + ll1 + has2 * ll2
-    q = joint.softmax(-1).detach()  # E-step
+    q = joint.softmax(-1).detach()  # posterior, as used at inference
+    # E-step targets come from the views only: the prior sees the context, which can carry a balanced
+    # nuisance (e.g. whether the outcome region is visible); fed back into the targets it locks in a split
+    # on that nuisance. The prior is distilled from the view posterior instead.
+    qv = (ll1 + has2 * ll2).softmax(-1).detach()
     n2 = has2.sum().clamp_min(1.0)
-    prior_nll = -(q * prior).sum(-1).mean()
-    nce1 = -(q * ll1).sum(-1).mean()
-    nce2 = -(q * ll2 * has2).sum() / n2
+    prior_nll = -(qv * prior).sum(-1).mean()
+    nce1 = -(qv * ll1).sum(-1).mean()
+    nce2 = -(qv * ll2 * has2).sum() / n2
     target = batch["v1"].mean(1)
+    scene = ((model.scene_mean(batch["pooled"], 1) - target) ** 2).mean() + (
+        ((model.scene_mean(batch["pooled2"], 2) - batch["v2"].mean(1)) ** 2).mean((-1, -2)) * has2[:, 0]).sum() / n2
     recon = (q[..., None, None] * (model.predict_post(ctx) - target[:, None]) ** 2).mean((-1, -2)).sum(-1).mean()
     ukl = usage_kl(joint.softmax(-1))
+    pair = batch["has_v2"]
+    mi = paired_mi(ll1[pair].softmax(-1), ll2[pair].softmax(-1)) if pair.sum() > 1 else ll1.new_zeros(())
     a1, a2 = model.assoc_embed(batch["pooled"]), model.assoc_embed(batch["pooled2"])
     logits = a1 @ a2.T / model.tau
     labels = torch.arange(len(a1), device=a1.device)
     assoc = (F.cross_entropy(logits, labels, reduction="none") * has2[:, 0]).sum() / n2
-    loss = prior_nll + nce1 + nce2 + lam_g * recon + lam_u * ukl + lam_a * assoc
+    loss = prior_nll + nce1 + nce2 + lam_g * (recon + scene) + lam_u * ukl - lam_i * mi + lam_a * assoc
     return {"loss": loss, "prior_nll": prior_nll.detach(), "nce1": nce1.detach(), "nce2": nce2.detach(),
-            "recon": recon.detach(), "usage_kl": ukl.detach(), "assoc": assoc.detach(), "q": q}
+            "recon": recon.detach(), "scene": scene.detach(), "usage_kl": ukl.detach(), "view_mi": mi.detach(),
+            "assoc": assoc.detach(), "q": q}

@@ -130,16 +130,19 @@ Gripper width w_t = proprio[6]. FSM trễ (hysteretic), ngưỡng hiệu chỉnh
 Mô-đun:
 - Prior `p(z|c,a)`: MLP 640→256→M.
 - Encoder view `f(v)`: Transformer 2 lớp, d=256, 4 head, trên 128 token (4×32) + CLS → 256.
-- Hypothesis embedding `u_z = MLP([g(c), e_z])`, e_z ∈ R^{M×128}.
-- Score `s(v,z,c) = ⟨u_z, f(v)⟩ / τ`, τ = 0.1; hai bộ (s1 cho post, s2 cho re-encounter) không chia sẻ trọng số f.
+- Hypothesis embedding `u_z = MLP([e_z, onehot(loại event)])`, e_z ∈ R^{M×128} — **không** có context (sửa 2026-10-27: với `u_z = MLP([g(c), e_z])` score nhận ra view của chính event chỉ qua c, z không được dùng, pilot suy biến q đều).
+- Phần cảnh của view được khử bằng hồi quy từ pre-window của chính view đó: `m_k(c) = MLP(pooled) ≈ v̄_k` (MSE, `scene`), encoder nhận `v − sg(m_k(c))`. Context vì thế vẫn "giải thích" phần dự đoán được của view (bố cục, task) nhưng không thể ghép anchor với ứng viên.
+- Score `s(v,z) = ⟨u_z, f(v − m(c))⟩ / τ`, τ = 0.1; hai bộ (s1 cho post, s2 cho re-encounter) không chia sẻ trọng số f.
 - Head dự đoán `ĝ(z,c,a)` → 32×256 (trung bình theo thời gian của post), dùng cho ω.
 
 Huấn luyện EM (offline, chỉ trên feature):
-- E-step: `q(z_j) ∝ p(z|c,a)·exp(s1(v1,z)+s2(v2,z))` (liệt kê M). Event không có re-encounter: chỉ dùng s1.
-- M-step loss = `−Σ_z q(z)[log p(z|c,a)] + InfoNCE_1 + InfoNCE_2 + λ_g Σ_z q(z)‖ĝ(z)−v̄1‖² + λ_u KL(q̄‖Uniform)`.
+- Posterior (inference, ledger): `q(z_j) ∝ p(z|c,a)·exp(s1(v1,z)+s2(v2,z))` (liệt kê M). Event không có re-encounter: chỉ dùng s1.
+- E-step target khi train: `q_v(z_j) ∝ exp(s1+s2)` — **chỉ từ view**; prior được chưng cất từ q_v. (Nếu đưa prior vào target, prior thấy một nhiễu cân bằng trong context — ví dụ vùng outcome có bị che không — và khóa cụm theo nhiễu đó.)
+- M-step loss = `−Σ_z q_v(z)[log p(z|c,a)] + InfoNCE_1 + InfoNCE_2 + λ_g (Σ_z q(z)‖ĝ(z)−v̄1‖² + scene) + λ_u KL(q̄‖Uniform) − λ_i I(z1; z2)`,
+  trong đó InfoNCE_k lấy trọng số q_v, và `I(z1; z2)` là mutual information kiểu IIC (Ji et al. 2019) giữa `softmax(s1)` và `softmax(s2)` trên các event có re-encounter (hai view của cùng một outcome). Lý do: với u_z chung cho mọi event và q đều, InfoNCE đạt cực đại khi score phẳng (Jensen), nên một mình nó không chọn được phân hoạch; sự đồng thuận giữa hai view thì chọn được.
   InfoNCE: dương = (v của chính event, z), âm = v của 63 event khác trong batch, trong đó 32 là **hard negative** cùng loại event, context gần nhất (kNN trên g(c), cập nhật mỗi 1k bước).
 - M ∈ {2,4,6,8}, chọn theo **val InfoNCE + log-likelihood** (không dùng nhãn). Mặc định M=6.
-- λ_g=1.0, λ_u=0.1. AdamW lr 3e-4, wd 0.01, batch 512 event, 20k bước, warmup 1k + cosine. ~1–2 GPU-h (chạy được trên 3050 với batch 128).
+- λ_g=1.0, λ_u=0.1, λ_i=1.0. AdamW lr 3e-4, wd 0.01, batch 512 event, 20k bước, warmup 1k + cosine. ~1–2 GPU-h (chạy được trên 3050 với batch 128).
 
 ### 6.3 Observability và trạng thái
 - `ω_j = Σ_p Σ_z p(z|c,a)‖ĝ_p(z)−ḡ_p‖²/σ_p²` (σ_p² = variance patch trên train).

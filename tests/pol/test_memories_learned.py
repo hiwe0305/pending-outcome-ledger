@@ -21,7 +21,8 @@ def assets():
     with torch.no_grad():
         n = 32
         model.set_banks({"v1": torch.randn(n, 4, 32, 256), "v2": torch.randn(n, 4, 32, 256),
-                         "w2": torch.randn(n, 16), "has_v2": torch.ones(n, dtype=torch.bool)})
+                         "w2": torch.randn(n, 16), "has_v2": torch.ones(n, dtype=torch.bool),
+                         "pooled": torch.randn(n, 2, 1152), "pooled2": torch.randn(n, 2, 1152)})
     return {"proj50": rng.normal(size=(2 * D, 50)) / np.sqrt(2 * D), "proj_mean": np.zeros(2 * D),
             "outcome_model": model, "sigma2": torch.ones(32, 256), "omega0": 0.0,
             "kem_scorer": bm.KeyframeScorer().eval(), "mu_net": bm.RecurrentMemory(K=8).eval(),
