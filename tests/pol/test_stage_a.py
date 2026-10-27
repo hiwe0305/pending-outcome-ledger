@@ -62,6 +62,16 @@ def test_calibration_is_per_task():
         assert _auroc(readout(q[sel], [items[i] for i in sel], p), [items[i]["target"] for i in sel]) == 1.0
 
 
+def test_group_score_is_the_mean_over_tasks():
+    from pol.gates import macro
+
+    g = macro([{"n": 10, "failures": 2, "pol": 0.9, "pol_shuffled": 0.5, "pol_fake_actions": None, "markov": 0.6},
+               {"n": 20, "failures": 8, "pol": 0.7, "pol_shuffled": 0.6, "pol_fake_actions": None, "markov": None}])
+    assert (g["n"], g["failures"]) == (30, 10)
+    assert g["pol"] == pytest.approx(0.8) and g["pol_shuffled"] == pytest.approx(0.55)
+    assert g["markov"] == pytest.approx(0.6) and g["pol_fake_actions"] is None
+
+
 def write_dataset(root, n_eps=12, T=140, seed=0):
     """SealedBin-3-shaped episodes: grasp, release over the bin, re-encounter; outcome in the logs."""
     from pol.features import PCA, FeatureStore

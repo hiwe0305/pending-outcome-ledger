@@ -13,7 +13,8 @@ Scores of "this event is positive":
                 actions kept: what is left without the event's own evidence (G1 control). Fake actions are
                 reported too but not gated: the injected outcomes do not depend on the action.
   -omega        for occluded vs visible outcome events (tasks with a static occluder)
-Scores are pooled over tasks (spec); `per_task` repeats them per task, since pooling also rewards the base rate.
+Group scores (unrevealed, revealed) are the mean of the per-task AUROCs (`per_task`); pooling the events over
+tasks also rewards the base rate of each task, so the pooled AUROCs are reported under "pooled" only.
 Exit code 0 = all gates pass, 2 = N1 or G1 fails (stop: Plan B), 3 = only G2 fails (drop omega from the claim).
 """
 
@@ -86,6 +87,17 @@ def calibrate(q, items, tasks):
     return out
 
 
+def macro(per_task):
+    """Group score = mean of the per-task AUROCs (tasks without one are skipped); n and failures are summed.
+    Pooling events over tasks instead rewards the task's base rate: with shuffled evidence it still
+    reached 0.71 on round 1."""
+    g = {"n": sum(s["n"] for s in per_task), "failures": sum(s["failures"] for s in per_task)}
+    for k in ("pol", "pol_shuffled", "pol_fake_actions", "markov"):
+        v = [s[k] for s in per_task if s.get(k) is not None]
+        g[k] = float(np.mean(v)) if v else None
+    return g
+
+
 def readout(q, items, p_target_z):
     """Score of each event = its posterior against its own task's P(target | z)."""
     return np.array([qi @ p_target_z[it["task"]] for qi, it in zip(q, items)])
@@ -124,7 +136,7 @@ def compute_scores(pol_dir, markov_dir, data, features, tasks):
     va = stage_a_items(data, store, tasks, "val", cfgs)
     pol = load_assets(pol_dir, features)
     model = pol["outcome_model"]
-    lab_tr = [it for it in tr if it["target"] is not None]
+    lab_tr = [it for it in tr if it["target"] is not None and it["has_v2"]]  # the population the gates score
     p_target_z = calibrate(posterior(model, lab_tr) if lab_tr else np.zeros((0, model.M)), lab_tr, tasks)
     markov = load_assets(markov_dir, features).get("markov_head") if markov_dir else None
     proj = __import__("pol.features", fromlist=["PCA"]).PCA.load(Path(features) / "proj50.npz")
@@ -144,9 +156,11 @@ def compute_scores(pol_dir, markov_dir, data, features, tasks):
 
     gated = [it for it in va if it["target"] is not None and it["has_v2"]]
     out = {"n_val_events": len(va), "p_target_given_z": {t: p.round(3).tolist() for t, p in p_target_z.items()}}
-    for group, want in [("unrevealed", False), ("revealed", True)]:
-        out[group] = scores([it for it in gated if it["revealed"] == want])
     out["per_task"] = {t: scores([it for it in gated if it["task"] == t]) for t in tasks}
+    for group, want in [("unrevealed", False), ("revealed", True)]:
+        in_group = [t for t in tasks if bool(cfgs[t]["revealed"]) == want]
+        out[group] = {**macro([out["per_task"][t] for t in in_group]),
+                      "pooled": scores([it for it in gated if it["revealed"] == want])}
     occl = [it for it in va if it["observable"] is not None and it["family"] in ("batteries_sort", "sealed_bin")]
     if occl:
         from .data import collate_events
