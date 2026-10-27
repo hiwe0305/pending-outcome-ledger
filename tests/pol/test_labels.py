@@ -1,7 +1,7 @@
 import numpy as np
 
 from pol.events import Event
-from pol.labels import OUTCOMES, event_observable, event_outcomes
+from pol.labels import OUTCOMES, event_observable, event_outcomes, gate_target
 
 
 def bin_logs(T, release_t, cube, final_loc, n=3):
@@ -55,3 +55,15 @@ def test_empty_close_without_release_has_no_outcome():
     ev = [Event(90, "G+", np.zeros(3)), Event(126, "R0", np.zeros(3))]
     assert event_outcomes("gather_inject", ev, bin_logs(200, 150, 1, 2)) == [None, None]  # release after the R0
     assert event_outcomes("gather_inject", ev, bin_logs(200, 60, 1, 2)) == [None, None]   # release before the grasp
+
+
+def test_gate_target_is_the_outcome_hidden_at_decision_time():
+    """Spec 4/10.1: BatteriesSort broken vs working (a spill shows in proprio), SealedBin behind the bin vs
+    in (a side deflection is visible); GatherInject, the revealed control, any failure vs in."""
+    want = {"batteries_sort": {"seated_working": False, "seated_broken": True, "spill": None},
+            "sealed_bin": {"in": False, "hidden_out": True, "visible_out": None, "stuck": None},
+            "gather_inject": {"in": False, "hidden_out": True, "visible_out": True, "stuck": True}}
+    for fam, names in want.items():
+        for name, target in names.items():
+            assert gate_target(fam, OUTCOMES[fam].index(name)) is target, (fam, name)
+        assert gate_target(fam, None) is None

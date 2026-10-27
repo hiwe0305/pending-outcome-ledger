@@ -204,7 +204,7 @@ def stage_a_items(data_root, store, tasks, split, task_cfgs):
         for ep in eps:
             if ep["seed"] not in keep:
                 continue
-            from .labels import FAILED, event_observable, event_outcomes
+            from .labels import FAILED, event_observable, event_outcomes, gate_target
 
             events = detect_events(ep["proprio"][:, 6], ep["proprio"][:, :3], th)
             outcome = dict(zip([e.t for e in events], event_outcomes(ep["family"], events, ep["logs"])))
@@ -215,6 +215,7 @@ def stage_a_items(data_root, store, tasks, split, task_cfgs):
                 # evaluator-only labels: used for metrics, gates and the label-trained baselines, never by POL
                 it.update(task=task, seed=ep["seed"], family=ep["family"], revealed=bool(task_cfgs[task]["revealed"]),
                           outcome=o, failed=None if o is None else o in FAILED[ep["family"]],
+                          target=gate_target(ep["family"], o),
                           observable=observable.get(it["t"]))
                 items.append(it)
     return items

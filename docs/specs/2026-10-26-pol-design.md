@@ -265,8 +265,9 @@ Tổng ≈ 450–550 GPU-h. Fail gate ở pha 3 → dừng, chuyển Plan B (pap
 
 ### 10.1 Gate ở pha 3 (đo trước khi có Stage B, chỉ trên feature + nhãn sim để đánh giá)
 Đơn vị là **event tại thời điểm quyết định** (lúc phân loại pin / lúc bấm xác nhận SealedBin / lúc đặt GatherInject).
-- **N1 (cần memory):** AUROC phát hiện "event này thất bại" của (a) classifier Markov trên ảnh + proprio hiện tại, (b) posterior POL. Qua nếu trên tập unrevealed `AUROC_POL − AUROC_Markov ≥ 0.10` **và** `AUROC_Markov ≤ 0.75`; trên tập revealed `|AUROC_POL − AUROC_Markov| ≤ 0.03`.
-- **G1 (phát hiện lỗi im lặng):** AUROC_POL ≥ 0.80 trên unrevealed; cùng model với action giả (lấy từ episode khác cùng pha) ≤ 0.60.
+- **Nhãn của gate** (`labels.GATE_TARGET`, *sửa 2026-10-28*): outcome mà quyết định phụ thuộc và bị ẩn lúc quyết định (§4). BatteriesSort: **pin hỏng vs tốt** (spill lộ qua proprio lúc gặp lại nên bỏ ra); SealedBin: **văng ra sau thùng vs trong thùng** (văng ngang thấy được nên bỏ ra); GatherInject (revealed): mọi lỗi vs trong đích. Bản trước dùng "thất bại" (spill, mọi cube ngoài đích), toàn lỗi nhìn thấy được, nên Markov đạt 0.96 ở round 1.
+- **N1 (cần memory):** AUROC phát hiện nhãn gate của (a) classifier Markov trên ảnh + proprio hiện tại (train trên cùng nhãn), (b) posterior POL. Qua nếu trên tập unrevealed `AUROC_POL − AUROC_Markov ≥ 0.10` **và** `AUROC_Markov ≤ 0.75`; trên tập revealed `|AUROC_POL − AUROC_Markov| ≤ 0.03`. Gộp các task theo spec; `per_task` báo riêng từng task (gộp còn thưởng cho tỉ lệ nền khác nhau giữa task).
+- **G1 (phát hiện lỗi im lặng):** AUROC_POL ≥ 0.80 trên unrevealed; cùng model khi **xáo evidence** (v1, v2 lấy từ event khác cùng task và loại, giữ context và action) ≤ 0.60. *Sửa 2026-10-28:* bản trước dùng action giả, nhưng các lỗi được inject không phụ thuộc action nên một POL đúng cũng không đổi theo action; action giả vẫn được báo (`pol_fake_actions`) nhưng không gate.
 - **G2 (observability):** AUROC của −ω tách event "vùng outcome bị che" (shutter hạ / văng ra sau thùng / wrist bị che) khỏi event "thấy được", chỉ trên các event có che **tĩnh**: ≥ 0.80; bản dùng variance thay ω phải thấp hơn rõ.
 - Fail N1 hoặc G1 → dừng (Plan B). Fail G2 → bỏ ω khỏi claim, chạy tiếp.
 

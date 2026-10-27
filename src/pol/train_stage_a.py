@@ -236,9 +236,10 @@ def is_nominal(ep):
 
 
 def markov_xy(items, proj):
-    sel = [it for it in items if it["has_v2"] and it["failed"] is not None]
+    """Markov checker data: frame + proprio just after the re-encounter, labelled with the gate target."""
+    sel = [it for it in items if it["has_v2"] and it["target"] is not None]
     X = np.stack([np.r_[proj.transform(it["markov_pooled"].reshape(1, -1))[0], it["markov_proprio"]] for it in sel]).astype(np.float32) if sel else np.zeros((0, 57), np.float32)
-    return X, np.array([it["failed"] for it in sel], bool)
+    return X, np.array([it["target"] for it in sel], bool)
 
 
 # --------------------------------------------------------------------- main

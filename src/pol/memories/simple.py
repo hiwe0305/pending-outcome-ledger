@@ -52,7 +52,8 @@ class RandomWrite(MemoryProducer):
 
 @register("Markov")
 class MarkovChecker(MemoryProducer):
-    """Memoryless: one token with P(failure) from a label-trained classifier on the current frame + proprio."""
+    """Memoryless: one token with P(gate target, e.g. broken battery) from a label-trained classifier on the
+    current frame + proprio."""
 
     def reset(self):
         self.row = None

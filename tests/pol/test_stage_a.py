@@ -6,7 +6,7 @@ import pytest
 
 from pol.gates import decide
 
-PASS = {"unrevealed": {"pol": 0.9, "markov": 0.6, "pol_fake": 0.5}, "revealed": {"pol": 0.95, "markov": 0.94},
+PASS = {"unrevealed": {"pol": 0.9, "markov": 0.6, "pol_shuffled": 0.5}, "revealed": {"pol": 0.95, "markov": 0.94},
         "omega_auroc": 0.85}
 
 
@@ -16,9 +16,9 @@ def test_all_gates_pass():
 
 
 @pytest.mark.parametrize("change,code,failed", [
-    ({"unrevealed": {"pol": 0.9, "markov": 0.85, "pol_fake": 0.5}}, 2, "N1"),   # memoryless checker too good
-    ({"unrevealed": {"pol": 0.75, "markov": 0.6, "pol_fake": 0.5}}, 2, "G1"),   # below 0.8
-    ({"unrevealed": {"pol": 0.9, "markov": 0.6, "pol_fake": 0.7}}, 2, "G1"),    # fake actions still work
+    ({"unrevealed": {"pol": 0.9, "markov": 0.85, "pol_shuffled": 0.5}}, 2, "N1"),   # memoryless checker too good
+    ({"unrevealed": {"pol": 0.75, "markov": 0.6, "pol_shuffled": 0.5}}, 2, "G1"),   # below 0.8
+    ({"unrevealed": {"pol": 0.9, "markov": 0.6, "pol_shuffled": 0.7}}, 2, "G1"),    # works without the event's views
     ({"revealed": {"pol": 0.95, "markov": 0.80}}, 2, "N1"),                     # wins where it must not
     ({"omega_auroc": 0.7}, 3, "G2"),
     ({"omega_auroc": None}, 3, "G2"),
@@ -31,6 +31,22 @@ def test_each_failure_branch(change, code, failed):
 def test_missing_revealed_control_is_noted_not_fatal():
     v = decide({k: v for k, v in PASS.items() if k != "revealed"})
     assert v["exit_code"] == 0 and any("revealed" in n for n in v["notes"])
+
+
+def test_shuffle_evidence_swaps_views_within_task_and_kind():
+    from pol.gates import shuffle_evidence
+
+    items = [{"task": t, "kind": k, "pooled": np.full(2, i), "act": np.full(3, i), "v1": np.full(4, i),
+              "v2": np.full(4, i), "w2": np.full(5, i), "pooled2": np.full(2, i), "has_v2": True}
+             for i, (t, k) in enumerate([("A", "R+")] * 3 + [("A", "R0")] * 2 + [("B", "R+")] * 2 + [("B", "R0")])]
+    out = shuffle_evidence(items)
+    for it, o in zip(items, out):
+        src = int(o["v1"][0])
+        assert (items[src]["task"], items[src]["kind"]) == (it["task"], it["kind"])
+        assert all(int(o[k][0]) == src for k in ("v2", "w2", "pooled2"))  # the views travel together
+        assert int(o["pooled"][0]) == int(it["pooled"][0]) and int(o["act"][0]) == int(it["act"][0])
+        lone = sum((x["task"], x["kind"]) == (it["task"], it["kind"]) for x in items) == 1
+        assert (src == int(it["v1"][0])) == lone  # never its own views unless it is alone in its group
 
 
 def write_dataset(root, n_eps=12, T=140, seed=0):
@@ -106,4 +122,6 @@ def test_gates_end_to_end(dataset, tmp_path, monkeypatch):
                        "--features", feats, "--tasks", "SealedBin-3", "--out", str(tmp_path / "gates.json")])
     report = json.loads((tmp_path / "gates.json").read_text())
     assert code in (0, 2, 3) and set(report["verdict"]) >= {"N1", "G1", "G2", "exit_code"}
-    assert "unrevealed" in report["scores"]
+    u = report["scores"]["unrevealed"]
+    assert {"n", "failures", "pol", "pol_shuffled", "pol_fake_actions", "markov"} <= set(u)
+    assert set(report["scores"]["per_task"]) == {"SealedBin-3"}

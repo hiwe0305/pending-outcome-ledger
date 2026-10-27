@@ -11,10 +11,21 @@ OUTCOMES = {
     "gather_inject": ("in", "hidden_out", "visible_out", "stuck"),
 }
 FAILED = {"batteries_sort": {2}, "sealed_bin": {1, 2, 3}, "gather_inject": {1, 2, 3}}
+# Gate target (spec 4, 10.1): (negative, positive) outcomes of the event the decision depends on. On the
+# unrevealed tasks it is hidden at decision time: BatteriesSort broken vs working (a spill shows in proprio at
+# the re-encounter), SealedBin behind the bin vs in (a side deflection stays visible). GatherInject is the
+# revealed control: any failure vs in. Other outcomes are left out of the gates.
+GATE_TARGET = {"batteries_sort": ({0}, {1}), "sealed_bin": ({0}, {1}), "gather_inject": ({0}, {1, 2, 3})}
 _BIN_LOC = {0: 0, 3: 1, 2: 2, 1: 3}  # bins.AT_TARGET, HIDDEN, ELSEWHERE, HELD -> outcome index
 SETTLE = 24  # steps after a release at which the cube's location is read (bounces are applied at +12)
 INSERT_WINDOW = (-6, 10)  # an insert/spill event this close to a release belongs to it
 RELEASE_LAG = (-6, 3)  # the FSM reports R+ a few steps after the gripper starts opening (hysteresis)
+
+
+def gate_target(family, outcome):
+    """True / False for the gate's positive / negative outcomes, None for events the gates leave out."""
+    neg, pos = GATE_TARGET[family]
+    return True if outcome in pos else False if outcome in neg else None
 
 
 def _battery(e, logs):

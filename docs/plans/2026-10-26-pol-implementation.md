@@ -196,6 +196,9 @@
 - `wandb_utils.init_run(stage: str, variant: str, cfg: dict, prov: dict, K: int, seed: int)` → run name `{stage}-{variant}-K{K}-s{seed}`, group `{stage}/{variant}`; `log(step, metrics)` every 20 steps.
 - Stage A trains POL OutcomeModel or the baseline modules of T6 (same loop, `stage_a_loss`); saves `model.pt`, `sigma2.npy`, `assets.json`; val every 1k: val NCE, and eval-only NMI/ω-AUROC from logs.
 - `gates.py` implements spec §10.1 thresholds exactly; exit code 0 = pass, 2 = fail N1/G1, 3 = fail G2 only.
+  *Fix 2026-10-28:* scored on `labels.GATE_TARGET` (broken vs working battery, behind the bin vs in; any failure on
+  GatherInject) instead of "failed"; the Markov head is trained on the same target; G1 control = shuffled
+  evidence (`gates.shuffle_evidence`), fake actions reported only; `per_task` scores added.
 - [ ] Tests (`tests/pol/test_gates.py`): synthetic scores reproduce each pass/fail branch; W&B offline smoke (`WANDB_MODE=disabled`) for 50 steps on synthetic data.
 
 ### Task 12: π0 with memory tokens
