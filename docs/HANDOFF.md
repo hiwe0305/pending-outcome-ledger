@@ -17,7 +17,7 @@ Paper draft (not in this repo, anonymous): `~/project/wm-wam-review/latex-paper/
 Core (events, ledger, outcome model, 13 memory variants), U-Suite envs + experts + collector, revealed test,
 pi0 SigLIP extraction (verified vs openpi JAX), features, Stage A/B datasets, causal replay, Stage A trainer
 for POL and all baselines (`python -m pol.train_stage_a`), gates (`python -m pol.gates`), live logging
-(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 99 passed.
+(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 102 passed.
 BatteriesSort collection yield fixed: 13 % → 67 % (bin walls, low placement, spill observed as an empty grasp).
 GatherInject labels fixed 2026-10-27 (commit 81f9c8f): a slip drops the cube mid-transport and the FSM reports
 `R0`, not `R+`; an `R0` now takes the outcome of a cube released after the previous event.
@@ -115,16 +115,44 @@ the evidence; it is lost when f1 is assigned to the M = 6 hypotheses. These are 
 and the IIC marginal term (uniform z over the batch) is maximised by spending z on task:kind, the largest
 variation, leaving one or two z per task. Config default is now `lam_i1 = 1.0`; it did not help on round 1.
 
-## Next
+### Clustering within task:kind tried (commit 0ed9bc8): z leaves the task, but finds no outcome
 
-1. Conditional clustering: compute the IIC terms within groups of the same task and kind (I(z1; z2 | task, kind)),
-   or give each task:kind its own M hypotheses, so z is not rewarded for encoding the task. Same features, ~30 min
-   per retrain. Target: the f1 probe (0.97 BatteriesSort). Decide whether to keep `lam_i1` after that.
-2. BatteriesSort occluder: render an event with `lamp_occluded` and check the flash is really hidden (G2).
-3. Markov baseline: one head per task (or task as input) so it is not below chance; makes N1 honest.
-4. More data only later: SealedBin has 9 behind-the-bin events in val.
+InfoNCE candidates and inference bank views from the event's own task:kind group, IIC as I(z1; z2 | group)
+(both terms, `lam_i = lam_i1 = 1`). Same commit fixes the inference bank: it was `items_tr[:4096]`, ordered by
+task, and held **no BatteriesSort view** on round 1 (now a random sample). Synthetic test: unconditional NMI(z,
+task) = 1 and within-task 0 → within-task 1.0. Retrained on round 1 (5000 steps, 32 min; previous run kept as
+`runs/round1/stage_a/POL_v1iic_657069a`, `gates_v1iic_657069a.json`):
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe}.py` on the remote.
+| val | POL v1↔v2 | + v1 IIC | + within task:kind | Markov | probe raw v1 |
+|---|---|---|---|---|---|
+| BatteriesSort, broken vs working (POL) | 0.564 | 0.496 | **0.487** | 0.294 | 0.932 |
+| BatteriesSort, probe on f1 embedding | 0.968 | 0.900 | 0.760 | | |
+| SealedBin, behind vs in (POL; 9 pos.) | 0.764 | 0.688 | **0.496** | 0.664 | 0.776 |
+| SealedBin, probe on f1 embedding | 0.755 | 0.682 | 0.695 | | |
+| GatherInject, failure vs in (POL) | 0.596 | 0.740 | 0.562 | 0.921 | — |
+| val NMI(z, task) | 0.22 | 0.48 | **0.02** | | |
+
+Gates exit 2 (unrevealed POL 0.49 = shuffled 0.50, −ω 0.47). z is now spread over all 6 values inside each task
+(train `q_entropy` 0.02, `view_mi` 1.42 of 1.79 max), and val NMI with the outcome is 0.09: the clusters follow
+another within-task variation that v1 and v2 share (likely slot / object position), not the outcome. The encoder
+also keeps less of the outcome (f1 probe 0.97 → 0.76). The bank fix and the conditioning landed together, so
+their separate effects are not measured.
+
+Reading across the three objectives: the outcome is linearly readable from the frozen features (0.93), but each
+unsupervised clustering picks the largest variation available to it — task, then within-task position — and a
+one-frame lamp flash is never the largest. Config defaults now: `lam_i1 = 1.0`, conditioning always on.
+
+## Next (decision)
+
+1. Residual that removes what the action predicts: condition `scene_mean` on the action too (and per time block,
+   not the block mean), so position/motion is explained and the unpredictable part (flash, bounce) is left to
+   cluster. Same features, ~30 min per run. Measure the f1 probe and NMI(z, outcome) within task.
+2. Or accept that unsupervised z does not find these outcomes and follow spec §10.1 (Plan B), or allow weak
+   supervision (a few labelled events) — which changes the paper's claim.
+3. Independent: BatteriesSort occluder check (G2), per-task Markov head (N1), the Stage B producer should pass
+   the task:kind group to the outcome model (now whole bank).
+
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe}.py` on the remote; probe log `logs/round1/embprobe_grouped.log`.
 
 ## Remaining plan tasks
 
