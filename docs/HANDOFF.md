@@ -17,7 +17,7 @@ Paper draft (not in this repo, anonymous): `~/project/wm-wam-review/latex-paper/
 Core (events, ledger, outcome model, 13 memory variants), U-Suite envs + experts + collector, revealed test,
 pi0 SigLIP extraction (verified vs openpi JAX), features, Stage A/B datasets, causal replay, Stage A trainer
 for POL and all baselines (`python -m pol.train_stage_a`), gates (`python -m pol.gates`), live logging
-(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 93 passed.
+(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 97 passed.
 BatteriesSort collection yield fixed: 13 % → 67 % (bin walls, low placement, spill observed as an empty grasp).
 GatherInject labels fixed 2026-10-27 (commit 81f9c8f): a slip drops the cube mid-transport and the FSM reports
 `R0`, not `R+`; an `R0` now takes the outcome of a cube released after the previous event.
@@ -37,50 +37,75 @@ Retrain on the remote (old run kept as `runs/stage_a/POL_collapsed_215392d`, `ru
 - Gates: exit 2. N1 pass (but no revealed-set control), G1 fail (unrevealed AUROC 0.667 = pol_fake, n=8, 2 failures),
   G2 fail, AUROC(−ω) = 0.11 (n=11; mostly noise, see round 1); `omega0` 1.7e-5.
 
-## Data round 1: done 2026-10-27 — gates fail, mainly because the failures are visible
+## Data round 1: done 2026-10-27 — the benchmark needs memory, POL does not find the outcome yet
 
 Plan and settings: [plans/2026-10-27-data-round1.md](plans/2026-10-27-data-round1.md); one resumable script
 `scripts/pol/run_round.sh` (collect → features → Stage A Markov + POL → gates). Ran 10:55–21:35 at commit 1caa9cd
 (labels from 81f9c8f): 3 chunks × 100 kept episodes per task (seeds 10000+), 3 collector workers (VRAM cap).
 Collect 4.5 h (BatteriesSort kept 74–81 %), features 5.8 h (938 episodes, 6.0 GB, `data/features_round1`),
-Markov 1.5 min, POL 5000 steps 20 min. Outputs on the remote: `runs/round1/{stage_a,gates.json}`, `logs/round1/`.
-Stage A: 7814 train / 848 val events.
+Markov 1.5 min, POL 5000 steps 20 min. Stage A: 7814 train / 848 val events. Outputs on the remote:
+`runs/round1/stage_a/{POL,Markov}`, `runs/round1/gates.json`, `logs/round1/`.
 
-Gates (`runs/round1/gates.json`, exit 2 — N1, G1, G2 all fail):
+### Gates fixed to the spec (commits b6d10d0, 0607fe7, 7929aa8)
 
-| | POL | POL, fake actions | Markov | needed |
-|---|---|---|---|---|
-| unrevealed (n=158, 33 failures) | 0.926 | 0.927 | **0.956** | N1: POL − Markov ≥ 0.10, Markov ≤ 0.75; G1: POL ≥ 0.80, fake ≤ 0.60 |
-| revealed, GatherInject (n=85, 15 failures) | 0.403 | 0.406 | 0.880 | \|POL − Markov\| ≤ 0.03 |
-| −ω, occluded vs visible (n=217) | 0.440 | | | G2 ≥ 0.80 |
+The first gates (`runs/round1/gates_failedlabel_75638cd.json`, Markov `stage_a/Markov_failedlabel_75638cd`)
+scored "failed" = BatteriesSort spill / any cube out of the bin. Those are visible at the re-encounter (a spill is
+an empty grasp, a side deflection lies on the table), so Markov reached 0.96 and POL 0.93 (BatteriesSort 1.0 for
+both). Fixes, all in `gates.py` / `labels.py`, spec §10.1 updated:
+- target = `labels.GATE_TARGET`, the outcome hidden at decision time (spec §4): BatteriesSort **broken vs
+  working**, SealedBin **behind the bin vs in**, GatherInject (revealed control) any failure vs in. The Markov
+  head is trained on the same target (retrained on round 1, POL unchanged: it never sees labels).
+- G1 control = **shuffled evidence** (v1, v2 from another event of the same task and kind). Fake actions cannot
+  fail a correct model, since the injected outcomes do not depend on the action; they are still reported.
+- group AUROC = **mean of the per-task AUROCs**; pooled, the shuffled control still got 0.71 from the task base
+  rates (48 % broken vs 13 % behind the bin). P(target | z) is calibrated per task, on train events with a
+  re-encounter (calibrated on all events it scored SealedBin at 0.24; pooled over tasks, 0.35).
 
-Per task (val, labelled events with a re-encounter; ad-hoc analysis, AUROC SE ≈ 0.07 at 14–19 failures):
+Gates now (`runs/round1/gates.json`, exit 2 — N1, G1, G2 fail):
 
-| task | n / failures | POL | Markov | note |
-|---|---|---|---|---|
-| BatteriesSort | 86 / 19 | 1.00 | 1.00 | only `spill` counts as failed (`labels.FAILED`); a spill is an empty grasp, visible |
-| SealedBin | 72 / 14 | 0.62 | 0.78 | `visible_out` (5): Markov mean 0.78; `hidden_out` (9): 0.35 vs 0.20 for `in` |
-| GatherInject | 85 / 15 | 0.40 | 0.88 | event kind alone (`R0`) gives 0.83 |
+| | POL | POL, shuffled evidence | Markov | needed | |
+|---|---|---|---|---|---|
+| unrevealed (2 tasks, n=134, 41 positive) | 0.664 | 0.529 | 0.479 | N1: POL − Markov ≥ 0.10 ✓, Markov ≤ 0.75 ✓; G1: POL ≥ 0.80 ✗, shuffled ≤ 0.60 ✓ | |
+| revealed, GatherInject (n=85, 15) | 0.596 | 0.589 | **0.921** | N1: \|POL − Markov\| ≤ 0.03 ✗ | |
+| −ω, occluded vs visible (n=217) | 0.440 | | | G2 ≥ 0.80 ✗ | |
+
+| task | n / positive | POL | POL, shuffled | Markov | linear probe on v1 (ad hoc) |
+|---|---|---|---|---|---|
+| BatteriesSort, broken vs working | 67 / 32 | 0.564 | 0.501 | 0.294 | 0.93 |
+| SealedBin, behind vs in | 67 / 9 | 0.764 | 0.557 | 0.664 | 0.78 |
+| GatherInject, failure vs in | 85 / 15 | 0.596 | 0.589 | 0.921 | — |
+
+AUROC SE ≈ 0.07 (BatteriesSort, GatherInject), ≈ 0.1 (SealedBin, 9 positives). Fake actions ≈ real everywhere.
 
 Reading:
-- N1 fails for the benchmark, not the model: Markov sees the frame just after the re-encounter (`data.py`,
-  `ta = tr + 8`), where most labelled failures are visible. The pooled 0.93–0.96 is inflated by BatteriesSort
-  (1.0) and the different base rates of the tasks. Truly silent failures in val: ~9 (`hidden_out`).
-  `seated_broken` (32 in val, the broken battery shown only by the lamp) is *not* counted as a failure.
-- POL ≈ POL with fake actions everywhere: the posterior does not use the action.
-- z still tracks task more than outcome: NMI(z, task) = 0.22, NMI(z, task:kind) = 0.29 (train and val alike);
-  BatteriesSort never uses z=1; val NMI with the outcome falls during training 0.27 → 0.10. Not collapsed
-  (train `q_entropy` 0.1–0.7, 5–6 z used, `view_mi` 0.55–0.9 vs 1.5 on the pilot).
-- ω: AUROC 0.44 with n=217, i.e. chance (the pilot's inverted 0.11 was noise); `omega0` 3.4e-3.
+- **The benchmark needs memory.** Markov does not detect the hidden outcome at decision time (0.29 / 0.66).
+  The BatteriesSort Markov head is *below* chance (0.29): one head trained across tasks with different targets;
+  a per-task logistic regression on the same input gives 0.41. Either way the N1 gain is real but inflated.
+- **The evidence is in the features.** Ad-hoc probes (logistic regression, train → val, BatteriesSort): broken vs
+  working is readable **only at the release frame** (AUROC 0.93 at t, 0.42–0.44 at t−8…t−4 and t+12, ~0.47
+  far before): the lamp flash, then gone — the intended memory problem; the battery itself does not give it away.
+  The same probe on events labelled lamp-occluded still gives 0.93: the shutter does not hide the flash from
+  the cameras (or `lamp_occluded` is wrong), so BatteriesSort observability labels, and G2 there, mean nothing yet.
+- **POL does not pick it up.** BatteriesSort 0.56 vs probe 0.93; SealedBin 0.76 ≈ probe 0.78 (few positives);
+  GatherInject 0.60 where the failure is plainly visible (Markov 0.92). Likely cause: the IIC term I(z1; z2)
+  rewards only what v1 and v2 share, and a silent outcome is by definition absent from v2 (the lamp is off at
+  the re-encounter), so z settles on scene/task (NMI(z, task) = 0.22; val NMI with the outcome falls 0.27 → 0.10
+  during training; train `q_entropy` 0.1–0.7, `view_mi` 0.55–0.9). The flash is one frame inside v1's first
+  time block, small next to scene variation.
+- ω: AUROC 0.44 (n=217), chance; `omega0` 3.4e-3. The pilot's inverted 0.11 (n=11) was noise.
 
-## Next (decision needed before more compute)
+## Next
 
-Spec §10.1 says N1/G1 fail → stop, Plan B. Before that, decide whether the gate measures the right thing:
-1. Failure definition: count `seated_broken` as failed for BatteriesSort, and/or restrict the unrevealed set to
-   events whose outcome is hidden at the decision frame (`observable == False`, `hidden_out`). Changes the spec.
-2. If the gate is redefined: rerun only `pol.gates` on round 1 (no new data needed; ~1 min), then judge POL
-   on the silent subset — val has few such events (~9 `hidden_out` + 32 `seated_broken`).
-3. Model, independent of 1–2: posterior ignores the action (fake ≈ real), z encodes task; ω at chance (G2).
+1. Outcome-model objective (no new data; retrain POL on `data/features_round1`, ~20 min, then `pol.gates`):
+   an objective that can find an outcome absent from v2, e.g. IIC between two time blocks / augmentations of
+   v1 itself, keeping v1↔v2 only where v2 can show the outcome. Targets to beat: the probes (0.93, 0.78) and
+   GatherInject Markov (0.92) for the revealed control.
+2. BatteriesSort occluder: render an event with `lamp_occluded` and check the flash is really hidden; G2 and
+   the observability claim depend on it.
+3. Markov baseline: one head per task (or task as input) so it is not below chance; makes N1 honest.
+4. More data only later: SealedBin has 9 behind-the-bin events in val.
+
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2}.py` on the remote.
 
 ## Remaining plan tasks
 
