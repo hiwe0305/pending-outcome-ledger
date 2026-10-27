@@ -17,7 +17,7 @@ Paper draft (not in this repo, anonymous): `~/project/wm-wam-review/latex-paper/
 Core (events, ledger, outcome model, 13 memory variants), U-Suite envs + experts + collector, revealed test,
 pi0 SigLIP extraction (verified vs openpi JAX), features, Stage A/B datasets, causal replay, Stage A trainer
 for POL and all baselines (`python -m pol.train_stage_a`), gates (`python -m pol.gates`), live logging
-(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 97 passed.
+(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 99 passed.
 BatteriesSort collection yield fixed: 13 % → 67 % (bin walls, low placement, spill observed as an empty grasp).
 GatherInject labels fixed 2026-10-27 (commit 81f9c8f): a slip drops the cube mid-transport and the FSM reports
 `R0`, not `R+`; an `R0` now takes the outcome of a cube released after the previous event.
@@ -94,18 +94,37 @@ Reading:
   time block, small next to scene variation.
 - ω: AUROC 0.44 (n=217), chance; `omega0` 3.4e-3. The pilot's inverted 0.11 (n=11) was noise.
 
+### v1-only IIC tried (commit 657069a): no gain — the encoder has the outcome, the clustering spends z on task
+
+`lam_i1 = 1` adds IIC between two augmentations of v1 (time-block / token dropout, noise), next to the v1↔v2
+term. Synthetic test with the outcome only in v1's first block: NMI 0 → 1.0. Retrained POL on round 1 (5000
+steps, 30 min; old run kept as `runs/round1/stage_a/POL_v1v2_7929aa8`, `runs/round1/gates_v1v2_7929aa8.json`):
+
+| per task (val) | POL v1↔v2 | POL + v1 IIC | shuffled (v1 IIC) | Markov | probe raw v1 | probe f1 embedding (v1↔v2 / v1 IIC) |
+|---|---|---|---|---|---|---|
+| BatteriesSort, broken vs working | 0.564 | 0.496 | 0.586 | 0.294 | 0.932 | **0.968 / 0.900** |
+| SealedBin, behind vs in (9 pos.) | 0.764 | 0.688 | 0.536 | 0.664 | 0.776 | 0.755 / 0.682 |
+| GatherInject, failure vs in | 0.596 | 0.740 | 0.827 | 0.921 | — | — |
+
+Gates still exit 2 (unrevealed POL 0.59, revealed 0.74 vs Markov 0.92, −ω 0.52). With v1 IIC, z encodes task even
+more: val NMI(z, task) 0.22 → 0.48, NMI(z, task:kind) 0.29 → 0.59; val BatteriesSort events fall in 2 z, SealedBin
+in 1. GatherInject's gain is context (shuffled 0.83 > 0.74).
+
+Reading: the learned v1 embedding f1 separates broken from working at 0.97 (linear probe), so the encoder keeps
+the evidence; it is lost when f1 is assigned to the M = 6 hypotheses. These are shared over all tasks and kinds,
+and the IIC marginal term (uniform z over the batch) is maximised by spending z on task:kind, the largest
+variation, leaving one or two z per task. Config default is now `lam_i1 = 1.0`; it did not help on round 1.
+
 ## Next
 
-1. Outcome-model objective (no new data; retrain POL on `data/features_round1`, ~20 min, then `pol.gates`):
-   an objective that can find an outcome absent from v2, e.g. IIC between two time blocks / augmentations of
-   v1 itself, keeping v1↔v2 only where v2 can show the outcome. Targets to beat: the probes (0.93, 0.78) and
-   GatherInject Markov (0.92) for the revealed control.
-2. BatteriesSort occluder: render an event with `lamp_occluded` and check the flash is really hidden; G2 and
-   the observability claim depend on it.
+1. Conditional clustering: compute the IIC terms within groups of the same task and kind (I(z1; z2 | task, kind)),
+   or give each task:kind its own M hypotheses, so z is not rewarded for encoding the task. Same features, ~30 min
+   per retrain. Target: the f1 probe (0.97 BatteriesSort). Decide whether to keep `lam_i1` after that.
+2. BatteriesSort occluder: render an event with `lamp_occluded` and check the flash is really hidden (G2).
 3. Markov baseline: one head per task (or task as input) so it is not below chance; makes N1 honest.
 4. More data only later: SealedBin has 9 behind-the-bin events in val.
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2}.py` on the remote.
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe}.py` on the remote.
 
 ## Remaining plan tasks
 
