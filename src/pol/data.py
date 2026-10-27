@@ -65,6 +65,8 @@ def event_tuples(ep, pooled, tokens, th, rho):
         if r is not None and events[r].t + POST <= T:
             tr = events[r].t
             pre_r, _ = event_windows(tr, T)
+            ta = min(T - 1, tr + 8)  # just after the re-encounter interaction (gripper closed / released)
+            item.update(markov_pooled=np.asarray(pooled[ta], np.float32), markov_proprio=ep["proprio"][ta].astype(np.float32))
             item.update(has_v2=True, v2=_window_tokens(tokens, tr, tr + POST),
                         w2=ep["proprio"][tr:tr + 16, 6].astype(np.float32),
                         pooled2=(pooled[pre_r].mean(0) if pre_r.stop > pre_r.start else pooled[tr]).astype(np.float32))
@@ -201,8 +203,17 @@ def stage_a_items(data_root, store, tasks, split, task_cfgs):
         for ep in eps:
             if ep["seed"] not in keep:
                 continue
+            from .labels import FAILED, event_observable, event_outcomes
+
+            events = detect_events(ep["proprio"][:, 6], ep["proprio"][:, :3], th)
+            outcome = dict(zip([e.t for e in events], event_outcomes(ep["family"], events, ep["logs"])))
+            observable = dict(zip([e.t for e in events], event_observable(ep["family"], events, ep["logs"])))
             for it in event_tuples(ep, store.pooled(task, ep["seed"]), store.tokens(task, ep["seed"]), th,
                                    float(task_cfgs[task]["rho"])):
-                it.update(task=task, seed=ep["seed"])
+                o = outcome.get(it["t"])
+                # evaluator-only labels: used for metrics, gates and the label-trained baselines, never by POL
+                it.update(task=task, seed=ep["seed"], family=ep["family"], revealed=bool(task_cfgs[task]["revealed"]),
+                          outcome=o, failed=None if o is None else o in FAILED[ep["family"]],
+                          observable=observable.get(it["t"]))
                 items.append(it)
     return items

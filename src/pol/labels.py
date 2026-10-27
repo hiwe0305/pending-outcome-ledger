@@ -41,3 +41,25 @@ def event_outcomes(family, events, logs):
     """Outcome index per event (into OUTCOMES[family]) or None for events without an outcome."""
     fn = _battery if family == "batteries_sort" else _bin
     return [fn(e, logs) if e.kind == "R+" else None for e in events]
+
+
+def event_observable(family, events, logs, post=16):
+    """Evaluator-only: was the outcome region visible after the event (True), hidden by a static
+    occluder (False), or not an outcome event (None)? BatteriesSort: the lamp shutter; SealedBin: the
+    lid shutter. GatherInject has no occluder, so its outcome events are all visible."""
+    out = []
+    for e in events:
+        if e.kind != "R+":
+            out.append(None)
+            continue
+        window = logs[max(0, e.t + RELEASE_LAG[0]):min(len(logs), e.t + post)]
+        if family == "batteries_sort":
+            if _battery(e, logs) is None:
+                out.append(None)
+                continue
+            out.append(not any(r.get("lamp_occluded") for r in window))
+        elif family == "sealed_bin":
+            out.append(None if _bin(e, logs) is None else not any(r.get("shutter") for r in window))
+        else:
+            out.append(None if _bin(e, logs) is None else True)
+    return out

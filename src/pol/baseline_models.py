@@ -118,3 +118,18 @@ class VerifyHead(nn.Module):
 
     def stage_a_loss(self, batch):  # x [B,50], label [B] 1 = placement achieved
         return F.binary_cross_entropy_with_logits(self(batch["x"]), batch["label"].float())
+
+
+class MarkovHead(nn.Module):
+    """Memoryless re-encounter checker: P(the event being re-encountered failed | frame, proprio).
+    Label-trained on re-encounter frames; it is the 'Markov' baseline and the N1 gate reference."""
+
+    def __init__(self):
+        super().__init__()
+        self.net = _mlp(D + 7, 128, 1)
+
+    def forward(self, x):
+        return self.net(x).squeeze(-1)
+
+    def stage_a_loss(self, batch):  # x [B,57] = proj50 + proprio, label [B] 1 = failed
+        return F.binary_cross_entropy_with_logits(self(batch["x"]), batch["label"].float())
