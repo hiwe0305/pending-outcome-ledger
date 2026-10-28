@@ -17,7 +17,7 @@ Paper draft (not in this repo, anonymous): `~/project/wm-wam-review/latex-paper/
 Core (events, ledger, outcome model, 13 memory variants), U-Suite envs + experts + collector, revealed test,
 pi0 SigLIP extraction (verified vs openpi JAX), features, Stage A/B datasets, causal replay, Stage A trainer
 for POL and all baselines (`python -m pol.train_stage_a`), gates (`python -m pol.gates`), live logging
-(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 102 passed.
+(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 104 passed.
 BatteriesSort collection yield fixed: 13 % → 67 % (bin walls, low placement, spill observed as an empty grasp).
 GatherInject labels fixed 2026-10-27 (commit 81f9c8f): a slip drops the cube mid-transport and the FSM reports
 `R0`, not `R+`; an `R0` now takes the outcome of a cube released after the previous event.
@@ -142,17 +142,48 @@ Reading across the three objectives: the outcome is linearly readable from the f
 unsupervised clustering picks the largest variation available to it — task, then within-task position — and a
 one-frame lamp flash is never the largest. Config defaults now: `lam_i1 = 1.0`, conditioning always on.
 
+### Scene residual from the pre-window + the view's actions, per time block (commit f83853f): no gain
+
+`scene_mean` takes `[pooled, act1]` (`act2` for the re-encounter: the 16 actions observed at the view's frames,
+also passed by the Stage B producer) and predicts each of the 4 time blocks (flag `model.scene_act`, default on;
+grouping and `lam_i1 = 1` kept). Synthetic test (hidden slot moves both views by 3x the outcome, the actions show
+the slot): pre-window only → NMI(z, slot) 1, NMI(z, outcome) 0; with the actions → outcome 1, slot 0. Retrained on
+round 1 (5000 steps, 34 min; previous run kept as `runs/round1/stage_a/POL_grouped_0ed9bc8`, its gates in
+`logs/round1/gates_grouped.log` — `runs/round1/gates.json` is now this run):
+
+| val | + within task:kind (0ed9bc8) | + residual from actions (f83853f) | probe raw v1 |
+|---|---|---|---|
+| BatteriesSort, broken vs working (POL) | 0.487 | **0.471** | 0.932 |
+| BatteriesSort, probe on f1 embedding | 0.760 | 0.861 | |
+| SealedBin, behind vs in (POL; 9 pos.) | 0.496 | **0.533** | 0.776 |
+| SealedBin, probe on f1 embedding | 0.695 | 0.538 | |
+| GatherInject, failure vs in (POL) | 0.562 | 0.517 | — |
+| val NMI(z, task) | 0.02 | 0.05 | |
+
+Gates exit 2 (unrevealed POL 0.50, shuffled 0.45, −ω 0.45). Train `view_mi` is still 1.39 (of 1.79), `q_entropy`
+0.03, val NMI(z, outcome) 0.09: v1 and v2 still agree strongly on a variation that neither the pre-window pooled
+features nor the actions predict, and z follows it, not the outcome. Not checked what it is; candidates are what
+the re-encounter shares with the event by construction (same place within rho, same object), readable in the
+32×256 tokens but not in the 2×1152 pooled pre-window.
+
+Code note: the scene head changed shape, so checkpoints from before f83853f (`POL_v1v2_*`, `POL_v1iic_*`,
+`POL_grouped_*`) load only at their own commits.
+
 ## Next (decision)
 
-1. Residual that removes what the action predicts: condition `scene_mean` on the action too (and per time block,
-   not the block mean), so position/motion is explained and the unpredictable part (flash, bounce) is left to
-   cluster. Same features, ~30 min per run. Measure the f1 probe and NMI(z, outcome) within task.
+Four unsupervised objectives (v1↔v2, + v1 IIC, + within task:kind, + residual from actions) leave POL at chance
+on the silent failures while a linear probe on raw v1 reads them at 0.93 / 0.78.
+
+1. Diagnose before another objective: which variable z encodes within a task (event position x_ee bins, object
+   id, re-encounter distance) — cheap, CPU, on the current checkpoint. Only worth it if the answer suggests one
+   more nuisance to remove.
 2. Or accept that unsupervised z does not find these outcomes and follow spec §10.1 (Plan B), or allow weak
    supervision (a few labelled events) — which changes the paper's claim.
 3. Independent: BatteriesSort occluder check (G2), per-task Markov head (N1), the Stage B producer should pass
    the task:kind group to the outcome model (now whole bank).
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe}.py` on the remote; probe log `logs/round1/embprobe_grouped.log`.
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act}.py`
+on the remote; probe logs `logs/round1/embprobe_{grouped,sceneact}.log`.
 
 ## Remaining plan tasks
 
