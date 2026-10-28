@@ -185,6 +185,50 @@ def test_iic_within_task_and_kind_finds_the_outcome_not_the_task():
         assert normalized_mutual_info_score(z[task == t], q[task == t]) > 0.8
 
 
+def motion(n, seed=0, d=16, n_tok=4, n_time=2):
+    """Within one task:kind group: where the arm goes after the event (a hidden slot, absent from the
+    pre-window, the same at the re-encounter) moves the views a lot, differently in each time block; the
+    outcome is a smaller pattern in both views. The executed actions show the slot."""
+    g = torch.Generator().manual_seed(seed)
+    slot, z = torch.randint(0, 2, (n,), generator=g), torch.randint(0, 2, (n,), generator=g)
+    move = torch.randn(2, n_time, n_tok, d, generator=torch.Generator().manual_seed(9)) * 3.0
+    pattern = torch.randn(2, n_tok, d, generator=torch.Generator().manual_seed(123))
+    noise = lambda: 0.3 * torch.randn(n, n_time, n_tok, d, generator=g)  # noqa: E731
+    act = lambda: (2.0 * slot - 1.0)[:, None, None] + 0.3 * torch.randn(n, 16, 7, generator=g)  # noqa: E731
+    show = move[slot] + pattern[z][:, None]
+    pooled = torch.randn(n, 2, d, generator=g)
+    batch = dict(pooled=pooled, act=torch.randn(n, 16, 7, generator=g), v1=show + noise(), act1=act(),
+                 v2=show + noise(), act2=act(), w2=torch.randn(n, 16, generator=g),
+                 has_v2=torch.ones(n, dtype=torch.bool), pooled2=pooled + 0.05 * torch.randn(n, 2, d, generator=g),
+                 kind=torch.zeros(n, dtype=torch.long))
+    return batch, z.numpy(), slot.numpy()
+
+
+def test_scene_residual_from_the_actions_removes_the_motion():
+    """Regression for round 1 within task:kind (z found a within-task variation shared by v1 and v2, not the
+    outcome): from the pre-window alone the motion stays in the residual and z clusters it; with the
+    actions during the view, per time block, it is predicted and z finds the outcome."""
+    def run(scene_act):
+        torch.manual_seed(0)
+        m = OutcomeModel(**{**SMALL, "n_time": 2, "scene_act": scene_act})
+        opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+        for step in range(300):
+            out = em_step(m, motion(128, seed=step)[0])
+            opt.zero_grad()
+            out["loss"].backward()
+            opt.step()
+        batch, z, slot = motion(512, seed=10_000)
+        with torch.no_grad():
+            q = em_step(m, batch)["q"].numpy().argmax(1)
+            assert m.scene_mean(batch["pooled"], 1, batch["act1"]).shape == (512, 2, 4, 16)
+        return normalized_mutual_info_score(z, q), normalized_mutual_info_score(slot, q)
+
+    nmi_z, nmi_slot = run(False)
+    assert nmi_slot > 0.5 and nmi_z < 0.2
+    nmi_z, nmi_slot = run(True)
+    assert nmi_z > 0.8 and nmi_slot < 0.2
+
+
 def test_grouped_mi_is_the_size_weighted_mean_over_groups():
     from pol.outcome_model import grouped_mi, paired_mi
 

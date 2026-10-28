@@ -57,17 +57,18 @@ def event_tuples(ep, pooled, tokens, th, rho):
         act = np.zeros((16, 7), np.float32)
         lo = max(0, e.t - 8)
         act[lo - (e.t - 8):] = act_prev[lo:e.t + 8]
+        # act1/act2: actions observed at the frames of each view (the scene residual's motion input)
         item = {"t": e.t, "kind": e.kind, "pooled": p_pre.astype(np.float32), "act": act,
-                "v1": _window_tokens(tokens, e.t, e.t + POST), "has_v2": False,
-                "v2": np.zeros((N_TIME, 32, 256), np.float32), "w2": np.zeros(16, np.float32),
-                "pooled2": p_pre.astype(np.float32)}
+                "v1": _window_tokens(tokens, e.t, e.t + POST), "act1": act_prev[e.t:e.t + POST].astype(np.float32),
+                "has_v2": False, "v2": np.zeros((N_TIME, 32, 256), np.float32), "w2": np.zeros(16, np.float32),
+                "act2": np.zeros((POST, 7), np.float32), "pooled2": p_pre.astype(np.float32)}
         r = reencounter_index(events, j, rho)
         if r is not None and events[r].t + POST <= T:
             tr = events[r].t
             pre_r, _ = event_windows(tr, T)
             ta = min(T - 1, tr + 8)  # just after the re-encounter interaction (gripper closed / released)
             item.update(markov_pooled=np.asarray(pooled[ta], np.float32), markov_proprio=ep["proprio"][ta].astype(np.float32))
-            item.update(has_v2=True, v2=_window_tokens(tokens, tr, tr + POST),
+            item.update(has_v2=True, v2=_window_tokens(tokens, tr, tr + POST), act2=act_prev[tr:tr + POST].astype(np.float32),
                         w2=ep["proprio"][tr:tr + 16, 6].astype(np.float32),
                         pooled2=(pooled[pre_r].mean(0) if pre_r.stop > pre_r.start else pooled[tr]).astype(np.float32))
         out.append(item)
@@ -101,7 +102,7 @@ def hard_negative_batches(ctx, kinds, batch_size, group=32, seed=0):
 def collate_events(items):
     import torch
 
-    keys = ["pooled", "act", "v1", "v2", "w2", "pooled2"]
+    keys = ["pooled", "act", "v1", "act1", "v2", "act2", "w2", "pooled2"]
     batch = {k: torch.as_tensor(np.stack([it[k] for it in items])) for k in keys}
     batch["has_v2"] = torch.as_tensor([it["has_v2"] for it in items])
     batch["kind"] = torch.as_tensor([KINDS.index(it["kind"]) for it in items])

@@ -76,6 +76,14 @@ def test_event_tuples_have_both_views():
     assert [it["kind"] for it in items] == ["G+", "R+", "G+", "R+"]
     assert items[0]["has_v2"] and not items[-1]["has_v2"]
     assert items[0]["v1"].shape == (4, 32, 256) and items[0]["act"].shape == (16, 7)
+    # view actions: the actions observed at each view's frames (StepObs.action = previous action)
+    a = prev_actions(ep["action"])
+    from pol.events import detect_events, reencounter_index
+
+    events = detect_events(ep["proprio"][:, 6], ep["proprio"][:, :3], TH)
+    t2 = events[reencounter_index(events, 0, 1.0)].t
+    assert np.array_equal(items[0]["act1"], a[items[0]["t"]:items[0]["t"] + 16])
+    assert np.array_equal(items[0]["act2"], a[t2:t2 + 16]) and not items[-1]["act2"].any()
 
 
 def test_split_has_no_overlap():

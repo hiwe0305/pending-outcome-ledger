@@ -28,7 +28,7 @@ from .wandb_utils import init_run
 
 ROOT = Path(__file__).resolve().parents[2]
 LEARNED = {"POL", "KEM", "MU", "AURA", "StateMem", "CheckVLA", "CheckFIFO", "AGM", "Markov"}
-MODEL_KEYS = ("M", "tau", "d_feat", "d_tok", "n_time", "n_tok", "d_ctx", "d_act", "d_assoc")
+MODEL_KEYS = ("M", "tau", "d_feat", "d_tok", "n_time", "n_tok", "d_ctx", "d_act", "d_assoc", "scene_act")
 
 
 def lr_at(step, total, warmup, base, final_frac=0.0):

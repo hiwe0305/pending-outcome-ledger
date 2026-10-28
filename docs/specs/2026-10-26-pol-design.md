@@ -132,6 +132,7 @@ Mô-đun:
 - Encoder view `f(v)`: Transformer 2 lớp, d=256, 4 head, trên 128 token (4×32) + CLS → 256.
 - Hypothesis embedding `u_z = MLP([e_z, onehot(loại event)])`, e_z ∈ R^{M×128} — **không** có context (sửa 2026-10-27: với `u_z = MLP([g(c), e_z])` score nhận ra view của chính event chỉ qua c, z không được dùng, pilot suy biến q đều).
 - Phần cảnh của view được khử bằng hồi quy từ pre-window của chính view đó: `m_k(c) = MLP(pooled) ≈ v̄_k` (MSE, `scene`), encoder nhận `v − sg(m_k(c))`. Context vì thế vẫn "giải thích" phần dự đoán được của view (bố cục, task) nhưng không thể ghép anchor với ứng viên.
+  *Sửa 2026-10-28 (3):* `m_k(c, a_k) = MLP([pooled, a_k])` dự đoán **từng khối thời gian** (4×32×256, MSE theo khối), với `a_k` = 16 action quan sát được tại các frame của view k (`act1` cho post, `act2` cho re-encounter; causal: producer có chúng khi đóng cửa sổ). Chỉ từ pre-window thì chuyển động sau event (tay và vật đi đâu) còn nguyên trong residual, và trong một nhóm task:kind đó là biến thiên lớn nhất mà v1 và v2 cùng thấy (round 1: NMI(z, task) 0.02 nhưng POL ở mức ngẫu nhiên). Cờ `model.scene_act`.
 - Score `s(v,z) = ⟨u_z, f(v − m(c))⟩ / τ`, τ = 0.1; hai bộ (s1 cho post, s2 cho re-encounter) không chia sẻ trọng số f.
 - Head dự đoán `ĝ(z,c,a)` → 32×256 (trung bình theo thời gian của post), dùng cho ω.
 

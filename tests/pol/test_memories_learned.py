@@ -66,6 +66,16 @@ def test_pol_writes_only_after_post_window(assets):
         assert written == (1 if o.t >= 20 + 16 - 1 else 0)
 
 
+def test_pol_view_actions_are_the_actions_at_the_view_frames(assets):
+    mem = make_memory("POL", {"name": "POL", "K": 8}, assets)
+    ev, seen = Event(20, "R+", np.zeros(3)), {}
+    for o in stream(40, events={20: ev}):
+        seen[o.t] = o.action
+        mem.hist.append(o)
+    vact = mem._window(ev)[4]
+    assert np.array_equal(vact, np.stack([seen[t] for t in range(20, 36)]))
+
+
 def test_pol_resolves_at_reencounter_unless_disabled(assets):
     ev = {20: Event(20, "R+", np.zeros(3)), 60: Event(60, "G+", np.array([0.01, 0.0, 0.0]))}
 

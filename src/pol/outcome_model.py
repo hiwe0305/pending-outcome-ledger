@@ -8,8 +8,11 @@ fixed bank of training views at inference (set_banks).
 The hypothesis embedding u_z sees only z and the event kind, never the context: views and context come
 from the same scene, so a context-dependent u matches each event's own view through the context alone
 and leaves z unused (instance discrimination). The scene part of a view is explained away instead by a
-regression from the view's own pre-window (scene_mean, plain MSE on frozen features): the encoder sees
-v - scene_mean(pooled), so what is left to cluster is what the context did not predict. The context also
+regression from the view's own pre-window and the actions executed during the view (scene_mean, plain MSE
+on frozen features, one prediction per time block): the encoder sees v - scene_mean(pooled, actions), so
+what is left to cluster is what neither the scene nor the motion predicts. Without the actions, where the
+arm and the object go after the event stays in the residual, and within a task:kind group that is the
+largest variation shared by v1 and v2 (round 1: z found it instead of the outcome). The context also
 enters the prior and the predicted post features.
 
 InfoNCE alone does not pick a partition: with u_z shared across events and q uniform, its optimum is a
@@ -31,6 +34,8 @@ from torch import nn
 import torch.nn.functional as F
 
 from .events import KINDS
+
+VIEW_STEPS = 16  # actions per view window (= events post), one per frame
 
 
 def mlp(*dims):
@@ -98,9 +103,10 @@ class ViewEncoder(nn.Module):
 
 
 class OutcomeModel(nn.Module):
-    def __init__(self, M=6, d_feat=1152, d_tok=256, n_time=4, n_tok=32, d_ctx=512, d_act=128, tau=0.1, d_assoc=64):
+    def __init__(self, M=6, d_feat=1152, d_tok=256, n_time=4, n_tok=32, d_ctx=512, d_act=128, tau=0.1, d_assoc=64,
+                 scene_act=True):
         super().__init__()
-        self.M, self.tau, self.n_tok, self.d_tok = M, tau, n_tok, d_tok
+        self.M, self.tau, self.n_tok, self.d_tok, self.n_time, self.scene_act = M, tau, n_tok, d_tok, n_time, scene_act
         self.ctx_feat = nn.Sequential(nn.Linear(2 * d_feat, d_ctx), nn.LayerNorm(d_ctx), nn.GELU())
         self.ctx_act = mlp(16 * 7, d_act, d_act)
         d = d_ctx + d_act
@@ -108,7 +114,8 @@ class OutcomeModel(nn.Module):
         self.hyp = nn.Parameter(torch.randn(M, 128) * 0.5)
         self.hyp_head = nn.ModuleList([mlp(128 + len(KINDS), 256, d_tok) for _ in range(2)])
         self.view = nn.ModuleList([ViewEncoder(d_tok, n_time, n_tok), ViewEncoder(d_tok, n_time, n_tok, extra=16)])
-        self.scene = nn.ModuleList([mlp(2 * d_feat, 256, n_tok * d_tok) for _ in range(2)])
+        d_scene = 2 * d_feat + (VIEW_STEPS * 7 if scene_act else 0)
+        self.scene = nn.ModuleList([mlp(d_scene, 256, n_time * n_tok * d_tok) for _ in range(2)])
         self.post_head = mlp(d + 128, 512, n_tok * d_tok)
         self.summary_head = nn.Linear(d, 24)
         self.assoc_head = nn.Linear(2 * d_feat, d_assoc)
@@ -135,12 +142,18 @@ class OutcomeModel(nn.Module):
                        torch.eye(K, device=self.hyp.device)[:, None].expand(-1, self.M, -1)], -1)
         return F.normalize(self.hyp_head[which - 1](x), dim=-1)[kind]
 
-    def scene_mean(self, pooled, which):
-        """[B, n_tok, d_tok]: the view predicted from its own pre-window alone (no action, no outcome)."""
-        return self.scene[which - 1](pooled.flatten(1)).view(-1, self.n_tok, self.d_tok)
+    def scene_mean(self, pooled, which, vact=None):
+        """[B, n_time, n_tok, d_tok]: the view predicted from its own pre-window and the actions executed during
+        it (vact [B, VIEW_STEPS, 7], None = zeros), one prediction per time block; never the outcome."""
+        x = pooled.flatten(1)
+        if self.scene_act:
+            if vact is None:
+                vact = x.new_zeros(len(x), VIEW_STEPS, 7)
+            x = torch.cat([x, vact.flatten(1)], -1)
+        return self.scene[which - 1](x).view(-1, self.n_time, self.n_tok, self.d_tok)
 
-    def view_embed(self, v, pooled, which, w2=None, aug=False):
-        resid = v - self.scene_mean(pooled, which).detach()[:, None]
+    def view_embed(self, v, pooled, which, w2=None, aug=False, vact=None):
+        resid = v - self.scene_mean(pooled, which, vact).detach()
         return self.view[which - 1](augment_view(resid) if aug else resid, w2 if which == 2 else None)
 
     def scores(self, f, u):
@@ -170,11 +183,12 @@ class OutcomeModel(nn.Module):
         """Reference views for the inference normaliser; pass a random sample of all tasks (an ordered list
         cut at max_size can leave a task out)."""
         g = batch.get("group", torch.zeros(len(batch["v1"]), dtype=torch.long))[:max_size]
-        self.bank1 = self.view_embed(batch["v1"][:max_size], batch["pooled"][:max_size], 1)
+        a1, a2 = (batch[k][:max_size] if k in batch else None for k in ("act1", "act2"))
+        self.bank1 = self.view_embed(batch["v1"][:max_size], batch["pooled"][:max_size], 1, vact=a1)
         self.bank1_group = g.clone()
         keep = batch["has_v2"][:max_size]
         self.bank2 = self.view_embed(batch["v2"][:max_size][keep], batch["pooled2"][:max_size][keep], 2,
-                                     batch["w2"][:max_size][keep])
+                                     batch["w2"][:max_size][keep], vact=None if a2 is None else a2[keep])
         self.bank2_group = g[keep].clone()
 
     def _banked_loglik(self, f, u, bank, group=None, bank_group=None):
@@ -182,18 +196,18 @@ class OutcomeModel(nn.Module):
         ref = torch.einsum("bmd,cd->bcm", u, bank) / self.tau
         return own - _log_mean_exp(ref, _same_group(group, bank_group, len(f), len(bank)))
 
-    def log_posterior_v1(self, pooled, act, v1, kind, group=None):
+    def log_posterior_v1(self, pooled, act, v1, kind, group=None, act1=None):
         """group: task:kind ids (data.event_group) to normalise against bank views of the same group; None
-        (no task at hand) = the whole bank."""
+        (no task at hand) = the whole bank. act1: actions executed during v1 (for its scene residual)."""
         ctx = self.context(pooled, act)
-        ll = self._banked_loglik(self.view_embed(v1, pooled, 1), self.hyp_embed(kind, 1), self.bank1,
+        ll = self._banked_loglik(self.view_embed(v1, pooled, 1, vact=act1), self.hyp_embed(kind, 1), self.bank1,
                                  group, self.bank1_group)
         return torch.log_softmax(self.prior_logits(ctx) + ll, -1)
 
-    def loglik_v2(self, v2, w2, pooled2, kind_j, group=None):
-        """Log-likelihood ratio of a re-encounter view (pre-window pooled2) under each hypothesis of the
-        original event j (of kind_j, group = its task:kind)."""
-        return self._banked_loglik(self.view_embed(v2, pooled2, 2, w2), self.hyp_embed(kind_j, 2), self.bank2,
+    def loglik_v2(self, v2, w2, pooled2, kind_j, group=None, act2=None):
+        """Log-likelihood ratio of a re-encounter view (pre-window pooled2, actions act2 during it) under each
+        hypothesis of the original event j (of kind_j, group = its task:kind)."""
+        return self._banked_loglik(self.view_embed(v2, pooled2, 2, w2, vact=act2), self.hyp_embed(kind_j, 2), self.bank2,
                                    group, self.bank2_group)
 
 
@@ -223,8 +237,9 @@ def _nce(S, group=None):
 def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0):
     ctx = model.context(batch["pooled"], batch["act"])
     prior = torch.log_softmax(model.prior_logits(ctx), -1)
-    f1 = model.view_embed(batch["v1"], batch["pooled"], 1)
-    f2 = model.view_embed(batch["v2"], batch["pooled2"], 2, batch["w2"])
+    a1, a2 = batch.get("act1"), batch.get("act2")  # actions during each view, for its scene residual
+    f1 = model.view_embed(batch["v1"], batch["pooled"], 1, vact=a1)
+    f2 = model.view_embed(batch["v2"], batch["pooled2"], 2, batch["w2"], vact=a2)
     group = batch.get("group")  # task:kind; None = one group
     ll1 = _nce(model.scores(f1, model.hyp_embed(batch["kind"], 1)), group)
     ll2 = _nce(model.scores(f2, model.hyp_embed(batch["kind"], 2)), group)
@@ -240,8 +255,8 @@ def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0
     nce1 = -(qv * ll1).sum(-1).mean()
     nce2 = -(qv * ll2 * has2).sum() / n2
     target = batch["v1"].mean(1)
-    scene = ((model.scene_mean(batch["pooled"], 1) - target) ** 2).mean() + (
-        ((model.scene_mean(batch["pooled2"], 2) - batch["v2"].mean(1)) ** 2).mean((-1, -2)) * has2[:, 0]).sum() / n2
+    scene = ((model.scene_mean(batch["pooled"], 1, a1) - batch["v1"]) ** 2).mean() + (
+        ((model.scene_mean(batch["pooled2"], 2, a2) - batch["v2"]) ** 2).mean((1, 2, 3)) * has2[:, 0]).sum() / n2
     recon = (q[..., None, None] * (model.predict_post(ctx) - target[:, None]) ** 2).mean((-1, -2)).sum(-1).mean()
     ukl = usage_kl(joint.softmax(-1))
     pair = batch["has_v2"]
@@ -250,7 +265,7 @@ def em_step(model, batch, lam_g=1.0, lam_u=0.1, lam_a=0.1, lam_i=1.0, lam_i1=0.0
     mi1 = ll1.new_zeros(())
     if lam_i1:
         u1 = model.hyp_embed(batch["kind"], 1)
-        qa, qb = (_nce(model.scores(model.view_embed(batch["v1"], batch["pooled"], 1, aug=True), u1), group).softmax(-1)
+        qa, qb = (_nce(model.scores(model.view_embed(batch["v1"], batch["pooled"], 1, aug=True, vact=a1), u1), group).softmax(-1)
                   for _ in range(2))
         mi1 = grouped_mi(qa, qb, group)
     a1, a2 = model.assoc_embed(batch["pooled"]), model.assoc_embed(batch["pooled2"])

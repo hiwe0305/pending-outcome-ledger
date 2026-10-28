@@ -69,26 +69,29 @@ class PendingOutcomeLedger(MemoryProducer):
         model = self.assets["outcome_model"]
         v = _blocks(post_frames, N_TIME, (model.n_tok, model.d_tok))
         w = np.zeros(16, np.float32)
+        vact = np.zeros((POST, 7), np.float32)  # actions at the view's frames, as data.event_tuples act1/act2
         for i, s in enumerate(post[:16]):
             w[i] = s.proprio[6]
-        return pooled.astype(np.float32), act, v, w
+            vact[i] = s.action
+        return pooled.astype(np.float32), act, v, w, vact
 
     @torch.no_grad()
     def _close(self, ev):
         model = self.assets["outcome_model"]
         tt = lambda a: torch.as_tensor(np.asarray(a), dtype=torch.float32)[None]  # noqa: E731
-        pooled, act, v, w = self._window(ev)
+        pooled, act, v, w, vact = self._window(ev)
         assoc = model.assoc_embed(tt(pooled))[0].numpy()
         if self.cfg.get("resolve", True) and self.ledger.entries:
             weights = self.ledger.association(ev.x_ee, assoc)
             if weights.any():
                 kj = torch.as_tensor([e.kind for e in self.ledger.entries])
                 n = len(self.ledger.entries)
-                ll = model.loglik_v2(tt(v).expand(n, -1, -1, -1), tt(w).expand(n, -1), tt(pooled).expand(n, -1, -1), kj).numpy()
+                ll = model.loglik_v2(tt(v).expand(n, -1, -1, -1), tt(w).expand(n, -1), tt(pooled).expand(n, -1, -1), kj,
+                                     act2=tt(vact).expand(n, -1, -1)).numpy()
                 self.ledger.resolve(weights, ll)
         ctx = model.context(tt(pooled), tt(act))
         kind = KINDS.index(ev.kind)
-        logp = model.log_posterior_v1(tt(pooled), tt(act), tt(v), torch.as_tensor([kind]))[0].numpy()
+        logp = model.log_posterior_v1(tt(pooled), tt(act), tt(v), torch.as_tensor([kind]), act1=tt(vact))[0].numpy()
         omega = float(model.omega(ctx, self.assets["sigma2"])[0]) if self.cfg.get("use_omega", True) else 1.0
         self.ledger.write(Entry(x=ev.x_ee, kind=kind, logp=logp, omega=omega, t=ev.t,
                                 summary=model.summary(ctx)[0].numpy(), assoc=assoc,
