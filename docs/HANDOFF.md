@@ -169,20 +169,44 @@ the re-encounter shares with the event by construction (same place within rho, s
 Code note: the scene head changed shape, so checkpoints from before f83853f (`POL_v1v2_*`, `POL_v1iic_*`,
 `POL_grouped_*`) load only at their own commits.
 
+### What z encodes within a task (diagnostic on the f83853f checkpoint, CPU)
+
+NMI(argmax q, variable) within each task:kind group, size-weighted per task, against a shuffled-variable chance
+level (5 permutations); evaluator-only variables from the episodes and sim logs. Train split (n = 3570 / 2121 /
+2123 events), by kind where it matters:
+
+| task | strongest variables (NMI, chance ≈ 0.00–0.01) | outcome |
+|---|---|---|
+| BatteriesSort R+ | where the battery goes: tester socket vs back to its slot **0.39**; kind of the re-encounter event 0.31; re-encounter gap 0.17 | broken vs working ≈ chance (gate 0.47) |
+| SealedBin R+ / R0 | release position on a 3×3 x–y grid **0.24 / 0.26** | 0.01 |
+| GatherInject R+ / R0 | release position on a 3×3 x–y grid **0.27 / 0.24** | 0.00 |
+| all G+ | nothing above 0.08 (x–y grid) | — |
+
+Object id, event ordinal, time in episode, height and re-encounter distance are at chance. Val (n = 396 / 220 /
+232) shows the same order for BatteriesSort (socket vs slot 0.39) and an x–y grid above chance elsewhere, with
+chance levels of 0.07–0.13 at that size. (The `outcome` row in the log counts events without an outcome as a
+category, so for BatteriesSort R+ it mirrors socket vs slot; within inserts z does not separate broken/working.)
+
+Reading: within a task:kind group z clusters **where** the release happens (bin / place in x–y, or the task
+phase: insert into the tester vs put back), which the re-encounter shares with the event by construction (same
+place within rho). Neither the 2×1152 pooled pre-window nor the actions remove it, because the scene head never
+sees the end-effector position. Grasp clusters match none of the measured variables.
+Log: `logs/round1/zdiag.log` on the remote; script `/tmp/pol_zdiag.py`.
+
 ## Next (decision)
 
-Four unsupervised objectives (v1↔v2, + v1 IIC, + within task:kind, + residual from actions) leave POL at chance
-on the silent failures while a linear probe on raw v1 reads them at 0.93 / 0.78.
+Five steps (four objectives + this diagnostic): POL stays at chance on the silent failures while a linear probe on
+raw v1 reads them at 0.93 / 0.78; each unsupervised clustering takes the largest variation shared by the views.
 
-1. Diagnose before another objective: which variable z encodes within a task (event position x_ee bins, object
-   id, re-encounter distance) — cheap, CPU, on the current checkpoint. Only worth it if the answer suggests one
-   more nuisance to remove.
+1. One more nuisance with a named cause: give the scene head (and the prior) the end-effector position at the
+   event and of the view (`proprio[:3]`), or add the x–y place to the group. Same features, ~35 min. If z then
+   moves to another nuisance, stop this line.
 2. Or accept that unsupervised z does not find these outcomes and follow spec §10.1 (Plan B), or allow weak
    supervision (a few labelled events) — which changes the paper's claim.
 3. Independent: BatteriesSort occluder check (G2), per-task Markov head (N1), the Stage B producer should pass
    the task:kind group to the outcome model (now whole bank).
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act}.py`
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,zdiag}.py`
 on the remote; probe logs `logs/round1/embprobe_{grouped,sceneact}.log`.
 
 ## Remaining plan tasks
