@@ -229,6 +229,50 @@ def test_scene_residual_from_the_actions_removes_the_motion():
     assert nmi_z > 0.8 and nmi_slot < 0.2
 
 
+def place(n, seed=0, d=16, n_tok=4, n_time=2):
+    """Within one task:kind group: where the event happens (a hidden place, absent from the pre-window and the
+    actions, the same at the re-encounter by construction) changes the views a lot; the outcome is a smaller
+    pattern in both views. The end-effector positions (metres) show the place."""
+    g = torch.Generator().manual_seed(seed)
+    where, z = torch.randint(0, 2, (n,), generator=g), torch.randint(0, 2, (n,), generator=g)
+    look = torch.randn(2, n_time, n_tok, d, generator=torch.Generator().manual_seed(11)) * 3.0
+    pattern = torch.randn(2, n_tok, d, generator=torch.Generator().manual_seed(123))
+    noise = lambda: 0.3 * torch.randn(n, n_time, n_tok, d, generator=g)  # noqa: E731
+    pos = lambda: 0.1 * (2.0 * where - 1.0)[:, None, None] + 0.01 * torch.randn(n, 16, 3, generator=g)  # noqa: E731
+    show = look[where] + pattern[z][:, None]
+    pooled = torch.randn(n, 2, d, generator=g)
+    batch = dict(pooled=pooled, act=torch.randn(n, 16, 7, generator=g), v1=show + noise(), pos1=pos(),
+                 act1=torch.randn(n, 16, 7, generator=g), v2=show + noise(), pos2=pos(),
+                 act2=torch.randn(n, 16, 7, generator=g), w2=torch.randn(n, 16, generator=g),
+                 has_v2=torch.ones(n, dtype=torch.bool), pooled2=pooled + 0.05 * torch.randn(n, 2, d, generator=g),
+                 kind=torch.zeros(n, dtype=torch.long))
+    return batch, z.numpy(), where.numpy()
+
+
+def test_scene_residual_from_the_place_removes_what_the_re_encounter_shares():
+    """Regression for round 1 (z diagnostic: within a task:kind group z followed the release place, NMI
+    0.24-0.39, not the outcome): with the end-effector positions of the view in the scene head, z finds the
+    outcome."""
+    def run(scene_pos):
+        torch.manual_seed(0)
+        m = OutcomeModel(**{**SMALL, "n_time": 2, "scene_pos": scene_pos})
+        opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+        for step in range(300):
+            out = em_step(m, place(128, seed=step)[0])
+            opt.zero_grad()
+            out["loss"].backward()
+            opt.step()
+        batch, z, where = place(512, seed=10_000)
+        with torch.no_grad():
+            q = em_step(m, batch)["q"].numpy().argmax(1)
+        return normalized_mutual_info_score(z, q), normalized_mutual_info_score(where, q)
+
+    nmi_z, nmi_where = run(False)
+    assert nmi_where > 0.5 and nmi_z < 0.2
+    nmi_z, nmi_where = run(True)
+    assert nmi_z > 0.8 and nmi_where < 0.2
+
+
 def test_grouped_mi_is_the_size_weighted_mean_over_groups():
     from pol.outcome_model import grouped_mi, paired_mi
 

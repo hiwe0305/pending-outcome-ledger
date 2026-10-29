@@ -84,6 +84,8 @@ def test_event_tuples_have_both_views():
     t2 = events[reencounter_index(events, 0, 1.0)].t
     assert np.array_equal(items[0]["act1"], a[items[0]["t"]:items[0]["t"] + 16])
     assert np.array_equal(items[0]["act2"], a[t2:t2 + 16]) and not items[-1]["act2"].any()
+    t1, x = items[0]["t"], ep["proprio"][:, :3]
+    assert np.array_equal(items[0]["pos1"], x[t1:t1 + 16]) and np.array_equal(items[0]["pos2"], x[t2:t2 + 16])
 
 
 def test_split_has_no_overlap():

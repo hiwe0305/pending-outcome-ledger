@@ -10,6 +10,7 @@ model:
   d_act: 128
   d_assoc: 64
   scene_act: true     # scene residual from the pre-window and the actions during the view, per time block
+  scene_pos: true     # ... and the end-effector positions at the view's frames (the place a re-encounter shares)
 train:
   lr: 3.0e-4
   weight_decay: 0.01

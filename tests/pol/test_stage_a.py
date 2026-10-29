@@ -38,13 +38,13 @@ def test_shuffle_evidence_swaps_views_within_task_and_kind():
 
     items = [{"task": t, "kind": k, "pooled": np.full(2, i), "act": np.full(3, i), "v1": np.full(4, i),
               "v2": np.full(4, i), "w2": np.full(5, i), "pooled2": np.full(2, i), "has_v2": True,
-              "act1": np.full(3, i), "act2": np.full(3, i)}
+              "act1": np.full(3, i), "act2": np.full(3, i), "pos1": np.full(3, i), "pos2": np.full(3, i)}
              for i, (t, k) in enumerate([("A", "R+")] * 3 + [("A", "R0")] * 2 + [("B", "R+")] * 2 + [("B", "R0")])]
     out = shuffle_evidence(items)
     for it, o in zip(items, out):
         src = int(o["v1"][0])
         assert (items[src]["task"], items[src]["kind"]) == (it["task"], it["kind"])
-        assert all(int(o[k][0]) == src for k in ("v2", "w2", "pooled2", "act1", "act2"))  # the views travel together
+        assert all(int(o[k][0]) == src for k in ("v2", "w2", "pooled2", "act1", "act2", "pos1", "pos2"))  # the views travel together
         assert int(o["pooled"][0]) == int(it["pooled"][0]) and int(o["act"][0]) == int(it["act"][0])
         lone = sum((x["task"], x["kind"]) == (it["task"], it["kind"]) for x in items) == 1
         assert (src == int(it["v1"][0])) == lone  # never its own views unless it is alone in its group

@@ -26,7 +26,7 @@ import torch
 
 THRESHOLDS = {"n1_gain": 0.10, "n1_markov_max": 0.75, "n1_revealed_tol": 0.03, "g1_min": 0.80,
               "g1_shuffled_max": 0.60, "g2_min": 0.80}
-VIEWS = ("v1", "act1", "v2", "act2", "w2", "pooled2", "has_v2")
+VIEWS = ("v1", "act1", "pos1", "v2", "act2", "pos2", "w2", "pooled2", "has_v2")
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -117,8 +117,8 @@ def posterior(model, items, fake=False, seed=0):
             idx = np.where(kinds == k)[0]
             perm[idx] = rng.permutation(idx)
         act, act1 = act[torch.as_tensor(perm)], act1[torch.as_tensor(perm)]
-    lp = model.log_posterior_v1(b["pooled"], act, b["v1"], b["kind"], b["group"], act1)
-    ll2 = model.loglik_v2(b["v2"], b["w2"], b["pooled2"], b["kind"], b["group"], b["act2"])
+    lp = model.log_posterior_v1(b["pooled"], act, b["v1"], b["kind"], b["group"], act1, b["pos1"])
+    ll2 = model.loglik_v2(b["v2"], b["w2"], b["pooled2"], b["kind"], b["group"], b["act2"], b["pos2"])
     has2 = b["has_v2"].float()[:, None]
     return torch.softmax(lp + has2 * ll2, -1).numpy()
 
