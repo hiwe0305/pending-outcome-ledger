@@ -17,7 +17,7 @@ Paper draft (not in this repo, anonymous): `~/project/wm-wam-review/latex-paper/
 Core (events, ledger, outcome model, 13 memory variants), U-Suite envs + experts + collector, revealed test,
 pi0 SigLIP extraction (verified vs openpi JAX), features, Stage A/B datasets, causal replay, Stage A trainer
 for POL and all baselines (`python -m pol.train_stage_a`), gates (`python -m pol.gates`), live logging
-(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 104 passed.
+(stdout + `<out>/train_log.jsonl`; W&B falls back to offline). Tests: `.venv-cpu/bin/python -m pytest tests/pol` → 105 passed.
 BatteriesSort collection yield fixed: 13 % → 67 % (bin walls, low placement, spill observed as an empty grasp).
 GatherInject labels fixed 2026-10-27 (commit 81f9c8f): a slip drops the cube mid-transport and the FSM reports
 `R0`, not `R+`; an `R0` now takes the outcome of a cube released after the previous event.
@@ -193,20 +193,45 @@ place within rho). Neither the 2×1152 pooled pre-window nor the actions remove 
 sees the end-effector position. Grasp clusters match none of the measured variables.
 Log: `logs/round1/zdiag.log` on the remote; script `/tmp/pol_zdiag.py`.
 
+### End-effector positions in the scene head (commit 2f94740): no change, and the residual removes nothing
+
+`scene_mean` also takes `pos1` / `pos2` (proprio[:3] at the 16 frames of each view; flag `model.scene_pos`).
+Synthetic test: hidden place shared by both views, shown only by the positions → NMI(z, outcome) 0 → 1. Retrained
+on round 1 (5000 steps, 33 min; previous run kept as `runs/round1/stage_a/POL_sceneact_f83853f`,
+`runs/round1/gates_sceneact_f83853f.json`):
+
+| val | + residual from actions (f83853f) | + positions (2f94740) | probe raw v1 |
+|---|---|---|---|
+| BatteriesSort, broken vs working (POL) | 0.471 | **0.504** | 0.932 |
+| BatteriesSort, probe on f1 embedding | 0.861 | 0.896 | |
+| SealedBin, behind vs in (POL; 9 pos.) | 0.533 | **0.502** | 0.776 |
+| SealedBin, probe on f1 embedding | 0.538 | 0.743 | |
+| GatherInject, failure vs in (POL) | 0.517 | 0.557 | — |
+
+Gates exit 2 (unrevealed POL 0.50, shuffled 0.42, −ω 0.47). The z diagnostic is unchanged
+(`logs/round1/zdiag_scenepos.log`): SealedBin / GatherInject R+ still follow the x–y place (0.25 / 0.30),
+BatteriesSort R+ insert vs put-back (0.38).
+
+Why (`logs/round1/placeprobe.log`, `/tmp/pol_placeprobe.py`): a linear probe of the 3×3 place cell of R+ events
+(train → val) reads it **as well from the residual as from raw v1** in both checkpoints — SealedBin 0.92 / 0.92,
+GatherInject 0.95 / 0.96, BatteriesSort 0.75 / 0.75 (chance 0.17–0.31) — and val scene MSE moves by 2 %
+(0.0289 → 0.0284). The scene head (MLP, 256 hidden → 4×32×256, MSE) barely fits the view beyond its mean, so
+`v − scene_mean` keeps the place, the motion and the task signature; the action and position inputs
+(f83853f, 2f94740) were never used. The synthetic tests pass because there the nuisance is a large, clean,
+2-valued pattern.
+
 ## Next (decision)
 
-Five steps (four objectives + this diagnostic): POL stays at chance on the silent failures while a linear probe on
-raw v1 reads them at 0.93 / 0.78; each unsupervised clustering takes the largest variation shared by the views.
-
-1. One more nuisance with a named cause: give the scene head (and the prior) the end-effector position at the
-   event and of the view (`proprio[:3]`), or add the x–y place to the group. Same features, ~35 min. If z then
-   moves to another nuisance, stop this line.
+1. Make the residual actually remove what the inputs predict, and check it with the place probe before any
+   retrain: e.g. a closed-form ridge regression from standardised [pooled, actions, positions] to the per-block
+   tokens (fit once on train), or a wider scene head trained to convergence on its own. Success criterion:
+   place acc from the residual near chance while raw v1 stays at 0.92–0.95. Then retrain POL once.
 2. Or accept that unsupervised z does not find these outcomes and follow spec §10.1 (Plan B), or allow weak
    supervision (a few labelled events) — which changes the paper's claim.
 3. Independent: BatteriesSort occluder check (G2), per-task Markov head (N1), the Stage B producer should pass
    the task:kind group to the outcome model (now whole bank).
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,zdiag}.py`
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,embprobe_pos,zdiag,placeprobe}.py`
 on the remote; probe logs `logs/round1/embprobe_{grouped,sceneact}.log`.
 
 ## Remaining plan tasks
