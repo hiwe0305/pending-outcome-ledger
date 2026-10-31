@@ -247,6 +247,46 @@ Reading:
   that hides the place also hides the outcome. The one trade-off that keeps BatteriesSort's outcome — ridge on the
   pooled pre-window only, λ=0.01 — removes little of the place (0.75 → 0.65).
 
+### Two checks before Plan B (CPU, round 1 features; `logs/round1/planb_checks.log`)
+
+**A. Label curve.** Linear probe (scaler + logistic, C=0.1) on raw v1 (mean over blocks and tokens), trained on n
+labelled train events per task (train class ratio, at least 2 per class, 20 draws), val AUROC (gate population
+in brackets):
+
+| n labels | BatteriesSort | SealedBin | GatherInject |
+|---|---|---|---|
+| 8 | 0.85 ± 0.11 | 0.51 ± 0.11 | 0.87 ± 0.09 |
+| 16 | 0.94 ± 0.02 | 0.51 ± 0.11 | 0.94 ± 0.05 |
+| 32 | 0.95 ± 0.01 (0.95) | 0.53 ± 0.13 (0.54) | 0.99 ± 0.01 (0.99) |
+| 128 | 0.95 ± 0.01 | 0.57 ± 0.11 | 1.00 |
+| all (~900) | 0.95 | 0.72 | 1.00 |
+
+Weak supervision is cheap for BatteriesSort and GatherInject (≈16–32 labels reach the ceiling). SealedBin is not
+label-limited but signal-limited: 0.72 with all ~900 labels (97 positive, 9 in val), so its outcome is barely in
+the mean v1 at all.
+
+**B. BatteriesSort occluder: the shutter does not hide the flash.** Timing is not the cause: the insert, the
+shutter drop and the first lit frame all fall at event t−3 (median), the flash lasts 7 frames, and 97 of 104
+working inserts with the shutter down are lit inside the window. Probes broken vs working on the 974 insert
+events (201 with the shutter down), AUROC:
+
+| features | train visible → val visible | train visible → shutter-down | 5-fold CV shutter-down |
+|---|---|---|---|
+| raw v1, both cameras | 0.94 | 0.94 | 0.95 |
+| top camera only | 0.95 | 0.96 | 0.95 |
+| wrist camera only | 0.92 | 0.95 | 0.93 |
+| time block 0 / 1 / 2 / 3 | 0.90 / 0.95 / 0.64 / 0.71 | 0.94 / 0.94 / 0.49 / 0.45 | 0.93 / 0.94 / 0.53 / 0.48 |
+| actions in the window | 0.38 | 0.45 | 0.46 |
+| positions in the window | 0.47 | 0.50 | 0.41 |
+
+A probe trained only on visible events reads the shutter-down events just as well, from either camera alone, and
+only from the first 8 frames (the flash). Actions and positions are at chance, so the expert does not leak the
+outcome through its behaviour (deferred sorting). The cause is geometry: the shutter is a 0.04 × 0.04 × 0.06 m box
+(half-size 0.02, 0.02, 0.03), but the emissive bulb mesh (`low_poly_light_bulb.glb`, scale 0.85) has a bounding
+box of about 0.064 × 0.064 × 0.107 m, so the bulb sticks out on every side (not checked on a rendered frame).
+Consequence: the "unobservable" stratum and G2 are not real in round 1; the shutter has to cover the bulb (or the
+bulb_on actor be hidden while occluded) before any G2 claim, which needs new data for BatteriesSort.
+
 ## Next (decision)
 
 Six steps (four objectives, a stronger residual, this prototype): the unsupervised outcome clustering does not
@@ -254,12 +294,16 @@ separate the silent failures from what the re-encounter shares by construction, 
 remove one without the other.
 
 1. Plan B per spec §10.1, or weak supervision (a few labelled events per task) — which changes the paper's claim.
+   The label curve says ~32 labels per task suffice for BatteriesSort and GatherInject; SealedBin needs a better
+   signal, not more labels.
 2. Last cheap try on the residual route, BatteriesSort only: ridge on the pooled pre-window (λ=0.01) as the scene
    head, retrain, gates. Expected small effect (place 0.75 → 0.65).
-3. Independent: BatteriesSort occluder check (G2), per-task Markov head (N1), the Stage B producer should pass
-   the task:kind group to the outcome model (now whole bank).
+3. BatteriesSort occluder fix (needed for G2 and the unobservable stratum under either plan): hide the lit bulb
+   while occluded, re-collect BatteriesSort.
+4. Independent: per-task Markov head (N1), the Stage B producer should pass the task:kind group to the outcome
+   model (now whole bank).
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,embprobe_pos,zdiag,placeprobe,ridgeproto}.py`
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,embprobe_pos,zdiag,placeprobe,ridgeproto,planb_checks}.py`
 on the remote; probe logs `logs/round1/embprobe_{grouped,sceneact}.log`.
 
 ## Remaining plan tasks
