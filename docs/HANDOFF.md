@@ -220,18 +220,46 @@ GatherInject 0.95 / 0.96, BatteriesSort 0.75 / 0.75 (chance 0.17–0.31) — and
 (f83853f, 2f94740) were never used. The synthetic tests pass because there the nuisance is a large, clean,
 2-valued pattern.
 
+### Closed-form ridge scene head, prototype only (no model change): place and outcome do not come apart
+
+Before touching the model: ridge regression (closed form, standardised inputs, pooled reduced to 384 PCs) from the
+inputs to v1's per-block tokens, fit on train; on val, linear probes on the residual's block means — the 3×3 place
+cell of R+ events (want: chance, 0.17–0.31) and the gate target (want: raw-v1 level). `logs/round1/ridgeproto.log`,
+`/tmp/pol_ridgeproto.py`:
+
+| scene prediction | val MSE | SB place | GI place | BS place | SB target | BS target |
+|---|---|---|---|---|---|---|
+| none (raw v1) | 0.315 | 0.92 | 0.95 | 0.75 | 0.79 | 0.92 |
+| train mean | 0.144 | 0.92 | 0.96 | 0.74 | 0.79 | 0.92 |
+| (MLP scene head, f83853f / 2f94740) | 0.026–0.029 | 0.92 | 0.96 | 0.75 | | |
+| ridge pooled, λ=1 / 0.1 / 0.01 | 0.044 / 0.012 / 0.011 | 0.91 / 0.85 / 0.67 | 0.97 / 0.93 / 0.73 | 0.75 / 0.68 / 0.65 | 0.76 / 0.69 / 0.66 | 0.92 / 0.93 / 0.93 |
+| ridge pooled+act+pos, λ=0.01 | 0.009 | 0.67 | 0.74 | 0.68 | 0.64 | **0.65** |
+| + Fourier(pos), + task one-hot, λ=0.01 | 0.009 | 0.69–0.70 | 0.70 | 0.64–0.65 | 0.65 | 0.62 |
+| act+pos+Fourier+task only, any λ | 0.024–0.033 | 0.90 | 0.94–0.97 | 0.75 | 0.76–0.77 | 0.92–0.93 |
+
+Reading:
+- The MLP scene head was underfitting (val MSE 3× the ridge's), which is why the action/position inputs did nothing.
+- No setting reaches the criterion. Fitting the scene harder lowers the place only to 0.65–0.74 (still 3–4× chance)
+  and lowers the outcome **at the same rate**: SealedBin behind/in 0.79 → 0.65 (behind vs in the bin is itself a
+  place of the cube), BatteriesSort broken/working 0.92 → 0.62–0.65 once actions and positions join the pooled
+  pre-window (pooled alone keeps it at 0.93).
+- So on these features, "where" and "what happened" are not separable by regressing out the inputs: a residual
+  that hides the place also hides the outcome. The one trade-off that keeps BatteriesSort's outcome — ridge on the
+  pooled pre-window only, λ=0.01 — removes little of the place (0.75 → 0.65).
+
 ## Next (decision)
 
-1. Make the residual actually remove what the inputs predict, and check it with the place probe before any
-   retrain: e.g. a closed-form ridge regression from standardised [pooled, actions, positions] to the per-block
-   tokens (fit once on train), or a wider scene head trained to convergence on its own. Success criterion:
-   place acc from the residual near chance while raw v1 stays at 0.92–0.95. Then retrain POL once.
-2. Or accept that unsupervised z does not find these outcomes and follow spec §10.1 (Plan B), or allow weak
-   supervision (a few labelled events) — which changes the paper's claim.
+Six steps (four objectives, a stronger residual, this prototype): the unsupervised outcome clustering does not
+separate the silent failures from what the re-encounter shares by construction, and the residual route cannot
+remove one without the other.
+
+1. Plan B per spec §10.1, or weak supervision (a few labelled events per task) — which changes the paper's claim.
+2. Last cheap try on the residual route, BatteriesSort only: ridge on the pooled pre-window (λ=0.01) as the scene
+   head, retrain, gates. Expected small effect (place 0.75 → 0.65).
 3. Independent: BatteriesSort occluder check (G2), per-task Markov head (N1), the Stage B producer should pass
    the task:kind group to the outcome model (now whole bank).
 
-Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,embprobe_pos,zdiag,placeprobe}.py`
+Probe scripts (not in the repo, lost on reboot): `/tmp/pol_{breakdown,silent,leak,leak2,embprobe,embprobe_act,embprobe_pos,zdiag,placeprobe,ridgeproto}.py`
 on the remote; probe logs `logs/round1/embprobe_{grouped,sceneact}.log`.
 
 ## Remaining plan tasks
