@@ -5,6 +5,7 @@
 
 Unit: a gripper event with a re-encounter whose outcome is a gate target (`labels.DECISION_TARGET`: the outcome
 hidden at decision time — broken battery, cube behind the bin; any failure on the revealed control).
+`GATE_TARGET` now aliases `DECISION_TARGET`: spill / visible_out count as negatives (kept in the evaluation).
 Scores of "this event is positive":
   POL           posterior after the event's own view and its re-encounter view, mapped to P(target) with
                 P(target | z) estimated per task on train events (evaluator-only calibration, not used by the policy)
