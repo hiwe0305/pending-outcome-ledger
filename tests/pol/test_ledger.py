@@ -40,7 +40,7 @@ def test_decisive_resolution_and_status():
     assert led.status(0) == "pending_unobservable"
     assert led.status(1) == "pending_ambiguous"
     w = led.association(np.zeros(3), np.ones(64) / 8.0)
-    assert w[0] == pytest.approx(1.0) and w[1] == 0.0
+    assert w[0] == pytest.approx(0.9) and w[1] == 0.0  # 1 - p_null in the only entry within rho
     led.resolve(w, np.array([[0.0, -20.0, -20.0], [0.0, 0.0, 0.0]]))
     assert led.status(0) == "resolved" and led.entries[0].entropy < 0.3
     assert led.status(1) == "pending_ambiguous"
@@ -63,7 +63,7 @@ def test_association_uses_context_when_beta_positive():
     led.write(Entry(np.zeros(3), 1, np.log(np.ones(M) / M), 1.0, 0, np.zeros(24), a))
     led.write(Entry(np.zeros(3), 1, np.log(np.ones(M) / M), 1.0, 1, np.zeros(24), b))
     w = led.association(np.zeros(3), a)
-    assert w[0] == pytest.approx(1.0) and w[1] < 0.01
+    assert w[0] == pytest.approx(0.9, abs=0.01) and w[1] < 0.01
 
 
 def test_overflow_keeps_newest_and_size():
@@ -75,7 +75,7 @@ def test_overflow_keeps_newest_and_size():
 
 
 def test_eviction_prefers_resolved_then_oldest():
-    led = Ledger(K=3, M=M)
+    led = Ledger(K=3, M=M, eviction="entropy")
     led.write(entry(0))
     led.write(entry(1, probs=(0.98, 0.01, 0.01)))
     led.write(entry(2, probs=(0.98, 0.01, 0.01)))
@@ -87,3 +87,57 @@ def test_fifo_eviction_ablation():
     led.write(entry(5, probs=(0.98, 0.01, 0.01)))
     led.write(entry(3))
     assert led.entries[led.evict_index()].t == 3
+
+
+def test_association_sums_to_one_minus_p_null_and_zero_when_none():
+    led = Ledger(K=4, M=M, rho=0.06, p_null=0.2)
+    led.write(entry(0))
+    led.write(entry(1, x=(0.02, 0, 0)))
+    led.write(entry(2, x=(1, 0, 0)))
+    w = led.association(np.zeros(3), np.ones(64) / 8.0)
+    assert w.sum() == pytest.approx(0.8) and w[2] == 0.0 and w[0] > w[1] > 0
+    assert not led.association(np.array([0.5, 0, 0]), np.ones(64) / 8.0).any()
+
+
+def test_one_reencounter_splits_evidence_between_two_close_entries():
+    led = Ledger(K=4, M=M, rho=0.06)
+    led.write(entry(0))
+    led.write(entry(1))
+    w = led.association(np.zeros(3), np.ones(64) / 8.0)
+    ll = np.array([0.0, 3.0, -3.0])
+    led.resolve(w, np.stack([ll, ll]))
+    shift = sum(np.log(e.probs[1] / e.probs[2]) - 0.0 for e in led.entries)
+    full = Ledger(K=1, M=M)
+    full.write(entry(0))
+    full.resolve(np.array([1.0]), ll[None])
+    assert shift <= np.log(full.entries[0].probs[1] / full.entries[0].probs[2]) + 1e-9
+    assert all(np.isfinite(e.logp).all() and np.exp(e.logp).sum() == pytest.approx(1.0) for e in led.entries)
+
+
+def test_mixture_update_matches_formula():
+    led = Ledger(K=1, M=M)
+    led.write(entry(0, probs=(0.5, 0.3, 0.2)))
+    p, ll, w = np.array([0.5, 0.3, 0.2]), np.array([1.0, 0.0, -1.0]), 0.6
+    post = p * np.exp(ll) / (p * np.exp(ll)).sum()
+    led.resolve(np.array([w]), ll[None])
+    assert np.allclose(led.entries[0].probs, (1 - w) * p + w * post)
+
+
+def test_consumed_entry_is_evicted_first():
+    led = Ledger(K=3, M=M)
+    led.write(entry(0))
+    led.write(entry(1, probs=(0.98, 0.01, 0.01)))
+    led.write(entry(2))
+    led.mark_consumed(2)
+    assert led.entries[led.evict_index()].t == 2
+    feats, _ = led.featurize(t_now=100)
+    assert np.signbit(feats[2, 25]) and not np.signbit(feats[0, 25])
+
+
+def test_resolved_unconsumed_entry_outlives_pending_low_value():
+    led = Ledger(K=2, M=M)
+    led.write(entry(0, probs=(0.9, 0.05, 0.05)))  # pending but nearly certain: low value, oldest
+    led.write(entry(1, probs=(0.4, 0.3, 0.3)))
+    assert led.entries[led.evict_index()].t == 0
+    led.mark_consumed(1)
+    assert led.entries[led.evict_index()].t == 1

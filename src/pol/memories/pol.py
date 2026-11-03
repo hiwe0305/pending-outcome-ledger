@@ -36,7 +36,7 @@ class PendingOutcomeLedger(MemoryProducer):
         omega0 = float(self.assets.get("omega0", 0.0)) if c.get("use_omega", True) else 0.0
         self.ledger = Ledger(self.K, model.M, eta=float(c.get("eta", 0.3)), omega0=omega0,
                              rho=float(c.get("rho", 0.06)), beta=float(c.get("beta", 0.0)),
-                             eviction=c.get("eviction", "entropy"))
+                             eviction=c.get("eviction", "value"))
         self.hist = deque(maxlen=PRE + POST + 8)
         self.open = []
         self.t = 0

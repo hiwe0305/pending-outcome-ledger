@@ -8,4 +8,4 @@ memory:
   resolve: true
   use_omega: true
   call_frames_only: false
-  eviction: entropy
+  eviction: value
