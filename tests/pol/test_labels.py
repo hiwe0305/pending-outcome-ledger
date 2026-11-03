@@ -1,7 +1,7 @@
 import numpy as np
 
 from pol.events import Event
-from pol.labels import OUTCOMES, event_observable, event_outcomes, gate_target
+from pol.labels import OUTCOMES, event_observable, decision_target, event_outcomes, gate_target
 
 
 def bin_logs(T, release_t, cube, final_loc, n=3):
@@ -60,10 +60,17 @@ def test_empty_close_without_release_has_no_outcome():
 def test_gate_target_is_the_outcome_hidden_at_decision_time():
     """Spec 4/10.1: BatteriesSort broken vs working (a spill shows in proprio), SealedBin behind the bin vs
     in (a side deflection is visible); GatherInject, the revealed control, any failure vs in."""
-    want = {"batteries_sort": {"seated_working": False, "seated_broken": True, "spill": None},
-            "sealed_bin": {"in": False, "hidden_out": True, "visible_out": None, "stuck": None},
+    want = {"batteries_sort": {"seated_working": False, "seated_broken": True, "spill": False},
+            "sealed_bin": {"in": False, "hidden_out": True, "visible_out": False, "stuck": None},
             "gather_inject": {"in": False, "hidden_out": True, "visible_out": True, "stuck": True}}
     for fam, names in want.items():
         for name, target in names.items():
             assert gate_target(fam, OUTCOMES[fam].index(name)) is target, (fam, name)
         assert gate_target(fam, None) is None
+
+
+def test_decision_target_keeps_spill_as_negative():
+    assert decision_target("batteries_sort", 2) is False
+    assert decision_target("batteries_sort", 1) is True
+    assert decision_target("sealed_bin", 2) is False
+    assert decision_target("sealed_bin", 3) is None

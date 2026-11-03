@@ -3,7 +3,7 @@
     python -m pol.gates --pol runs/stage_a/POL --markov runs/stage_a/Markov --data data/pol \
         --features data/features --tasks ... --out runs/gates.json
 
-Unit: a gripper event with a re-encounter whose outcome is a gate target (`labels.GATE_TARGET`: the outcome
+Unit: a gripper event with a re-encounter whose outcome is a gate target (`labels.DECISION_TARGET`: the outcome
 hidden at decision time — broken battery, cube behind the bin; any failure on the revealed control).
 Scores of "this event is positive":
   POL           posterior after the event's own view and its re-encounter view, mapped to P(target) with

@@ -11,21 +11,25 @@ OUTCOMES = {
     "gather_inject": ("in", "hidden_out", "visible_out", "stuck"),
 }
 FAILED = {"batteries_sort": {2}, "sealed_bin": {1, 2, 3}, "gather_inject": {1, 2, 3}}
-# Gate target (spec 4, 10.1): (negative, positive) outcomes of the event the decision depends on. On the
-# unrevealed tasks it is hidden at decision time: BatteriesSort broken vs working (a spill shows in proprio at
-# the re-encounter), SealedBin behind the bin vs in (a side deflection stays visible). GatherInject is the
-# revealed control: any failure vs in. Other outcomes are left out of the gates.
-GATE_TARGET = {"batteries_sort": ({0}, {1}), "sealed_bin": ({0}, {1}), "gather_inject": ({0}, {1, 2, 3})}
+# Decision target (spec 4, 10.1): (negative, positive) outcomes of the event the decision depends on. Positive =
+# the outcome that changes the decision and is hidden at decision time. Visible failures (BatteriesSort spill,
+# SealedBin visible_out) stay in the evaluation as negatives, so the gate tests late combination of v1 and v2,
+# not memory of a one-frame cue. GatherInject is the revealed control: any failure vs in. Stuck is left out.
+DECISION_TARGET = {"batteries_sort": ({0, 2}, {1}), "sealed_bin": ({0, 2}, {1}), "gather_inject": ({0}, {1, 2, 3})}
+GATE_TARGET = DECISION_TARGET  # old name
 _BIN_LOC = {0: 0, 3: 1, 2: 2, 1: 3}  # bins.AT_TARGET, HIDDEN, ELSEWHERE, HELD -> outcome index
 SETTLE = 24  # steps after a release at which the cube's location is read (bounces are applied at +12)
 INSERT_WINDOW = (-6, 10)  # an insert/spill event this close to a release belongs to it
 RELEASE_LAG = (-6, 3)  # the FSM reports R+ a few steps after the gripper starts opening (hysteresis)
 
 
-def gate_target(family, outcome):
-    """True / False for the gate's positive / negative outcomes, None for events the gates leave out."""
-    neg, pos = GATE_TARGET[family]
+def decision_target(family, outcome):
+    """True / False for the positive / negative outcomes, None for events left out."""
+    neg, pos = DECISION_TARGET[family]
     return True if outcome in pos else False if outcome in neg else None
+
+
+gate_target = decision_target  # old name
 
 
 def _battery(e, logs):
