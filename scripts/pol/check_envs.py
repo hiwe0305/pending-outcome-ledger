@@ -9,6 +9,8 @@ on in the eval split, family-specific scene invariants, and 50 random steps run 
 import json, sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -21,6 +23,44 @@ def make(task, split, seed=0):
     env = apply_mikasa_vla_wrappers(env, include_overlays=False)
     obs, info = env.reset(seed=seed)
     return env, obs
+
+
+def lamp_frame(env, lit, occluded):
+    """Top+wrist frame after one zero-action step with the lamp forced lit/unlit and the shutter up/down."""
+    import torch
+
+    u = env.unwrapped
+    idx = torch.tensor([0], device=u.device)
+    u.lamp_afterglow_steps[0] = 10 if lit else 0
+    u.lamp_occluded[0] = occluded
+    u._set_shutter(idx, torch.tensor([occluded], device=u.device))
+    obs, *_ = env.step(env.action_space.sample() * 0)
+    return obs["rgb"][0].cpu().numpy().astype(np.int16), float(u.lamp_bulb_on.pose.p[0, 2])
+
+
+def check_lamp_occlusion(env):
+    """A lowered shutter must hide the reading: lit and unlit render the same, the lit bulb is parked away.
+    Round 1: the bulb mesh is larger than the shutter box, and probes read the flash through it (0.94)."""
+    failures = []
+    frames = {}
+    for occluded in (False, True):
+        for lit in (False, True):
+            env.reset(seed=0)
+            frames[lit, occluded] = lamp_frame(env, lit, occluded)
+    diff = {occ: int((np.abs(frames[True, occ][0] - frames[False, occ][0]) > 8).sum()) for occ in (False, True)}
+    print(f"  lamp lit vs unlit, changed pixels (both cameras): visible {diff[False]}, shutter down {diff[True]}")
+    if diff[False] == 0:
+        failures.append("lit lamp not visible with the shutter up (check is blind)")
+    if diff[True] > 0:
+        failures.append(f"lit lamp visible through the shutter ({diff[True]} pixels)")
+    if frames[True, True][1] < 100.0:
+        failures.append("lit bulb in the scene while the shutter is down")
+    # The occlusion itself must be observable (the cue for omega and for the expert's re-test).
+    shutter = int((np.abs(frames[False, True][0] - frames[False, False][0]) > 8).sum())
+    print(f"  shutter down vs up (lamp unlit), changed pixels: {shutter}")
+    if shutter < 100:
+        failures.append(f"lowered shutter barely visible ({shutter} pixels)")
+    return failures
 
 
 def check(task):
@@ -40,6 +80,8 @@ def check(task):
             failures.append("catch tray not covered")
         if u.LAMP_MODE != "flash" or not u.DEFERRED:
             failures.append("BatteriesSort must use flash lamp and deferred sorting")
+        failures += check_lamp_occlusion(env)
+        obs, _ = env.reset(seed=0)
     for _ in range(50):
         obs, _, _, _, info = env.step(env.action_space.sample())
     if "eem_log" in obs or "pol_log" in obs:

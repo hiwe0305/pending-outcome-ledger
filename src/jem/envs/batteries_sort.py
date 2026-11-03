@@ -47,6 +47,9 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
     CATCH_Y_OFFSET_FROM_SOCKET = -0.12
     CATCH_HALF_SIZE = (0.035, 0.035, 0.006)
     HOOD_HALF_SIZE = (0.03, 0.03, 0.035)
+    # Encloses the whole lamp: the bulb mesh spans ±0.032 m in x/y and 0.004–0.111 m above the lamp base.
+    # The old 0.02 × 0.02 × 0.03 box sat inside the bulb, invisible, and probes read the flash through it.
+    SHUTTER_HALF_SIZE = (0.036, 0.036, 0.057)
     LANGUAGE_INSTRUCTION = (
         "Test each battery in the socket and read the lamp. Put working batteries back in their "
         "tray slot and broken batteries in the red bin, pressing the button after each one."
@@ -82,7 +85,7 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
         self.catch_tray = self._box("catch_tray", self.CATCH_HALF_SIZE, np.array([90, 90, 90, 255]) / 255, True, hidden)
         # Visual-only occluders: cameras cannot see seating or (sometimes) the lamp, the gripper passes through.
         self.hood = self._box("socket_hood", self.HOOD_HALF_SIZE, np.array([60, 60, 70, 255]) / 255, False, hidden)
-        self.shutter = self._box("lamp_shutter", (0.02, 0.02, 0.03), np.array([60, 60, 70, 255]) / 255, False, hidden)
+        self.shutter = self._box("lamp_shutter", self.SHUTTER_HALF_SIZE, np.array([60, 60, 70, 255]) / 255, False, hidden)
         self.catch_cover = self._box("catch_cover", self.COVER_HALF_SIZE, np.array([60, 60, 70, 255]) / 255, False, hidden)
         n, d = self.num_envs, self.device
         self.stick_left = torch.zeros(n, dtype=torch.int64, device=d)
@@ -148,7 +151,7 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
     def _set_shutter(self, env_idx, down):
         pose = self.shutter.pose.raw_pose.clone()
         lamp = self.lamp_on_pos[env_idx].clone()
-        lamp[:, 2] = torch.where(down, lamp[:, 2] + 0.03, lamp[:, 2] + self.HEIGHT_OFFSET)
+        lamp[:, 2] = torch.where(down, lamp[:, 2] + self.SHUTTER_HALF_SIZE[2] + 0.002, lamp[:, 2] + self.HEIGHT_OFFSET)
         pose[env_idx, :3] = lamp
         self.shutter.pose = pose
 
@@ -219,12 +222,14 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
         lamp_on = self.lamp_afterglow_steps > 0
         if self.LAMP_MODE == "persistent":
             lamp_on = lamp_on | shown
+        # Behind a lowered shutter the scene shows an unlit bulb, so no camera angle or emission can leak the reading.
+        lit = lamp_on & ~self.lamp_occluded
         off_pose = self.lamp_bulb_off.pose.raw_pose.clone()
         on_pose = self.lamp_bulb_on.pose.raw_pose.clone()
-        off_pose[lamp_on, :3] = self.lamp_off_pos[lamp_on]
-        off_pose[~lamp_on, :3] = self.lamp_on_pos[~lamp_on]
-        on_pose[lamp_on, :3] = self.lamp_on_pos[lamp_on]
-        on_pose[~lamp_on, :3] = self.lamp_off_pos[~lamp_on]
+        off_pose[lit, :3] = self.lamp_off_pos[lit]
+        off_pose[~lit, :3] = self.lamp_on_pos[~lit]
+        on_pose[lit, :3] = self.lamp_on_pos[lit]
+        on_pose[~lit, :3] = self.lamp_off_pos[~lit]
         self.lamp_bulb_off.pose = off_pose
         self.lamp_bulb_on.pose = on_pose
 
@@ -302,6 +307,7 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
             # Evaluator-only log for labels and strata; jem.data.policy_observation drops it.
             "eem_log": {
                 "lamp_on": lamp_on,
+                "lamp_shown": lit,
                 "lamp_occluded": self.lamp_occluded,
                 "reading_flip": self.reading_flip,
                 "spill_event": self.new_spill_event,

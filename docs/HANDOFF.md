@@ -287,6 +287,29 @@ box of about 0.064 × 0.064 × 0.107 m, so the bulb sticks out on every side (no
 Consequence: the "unobservable" stratum and G2 are not real in round 1; the shutter has to cover the bulb (or the
 bulb_on actor be hidden while occluded) before any G2 claim, which needs new data for BatteriesSort.
 
+### BatteriesSort occluder fixed (2026-11-03, laptop; no new data yet)
+
+Measured before the fix (`scripts/pol/check_envs.py`, lamp forced lit/unlit after reset, both cameras): the lit
+bulb changes 729 pixels with the shutter up and **711 with it down**, and the shutter itself changed nothing. The
+bulb mesh spans ±0.032 m in x/y and 0.004–0.111 m above the lamp base; the 0.02 × 0.02 × 0.03 box sat entirely
+inside it, so the shutter was invisible as well as useless. Two changes in `jem/envs/batteries_sort.py`:
+- `SHUTTER_HALF_SIZE = (0.036, 0.036, 0.057)`, centred on the bulb: the lowered shutter is visible (1484 pixels),
+  the cue the expert's re-test and ω depend on — hiding the bulb alone would make "occluded" look like "broken".
+- behind a lowered shutter the scene shows the unlit bulb (`lit = lamp_on & ~lamp_occluded`), so no camera angle
+  or emission leaks the reading. `eem_log` keeps `lamp_on` (true reading) and adds `lamp_shown`.
+
+After: lit vs unlit with the shutter down differ by 0 pixels; `check_envs.py BatteriesSort-3-VLA-v0` passes (it now
+fails on the leak, on an invisible shutter and on a blind check); 105 CPU tests pass; one expert episode collects
+(873 steps, kept). Physics and the expert are unchanged (visual-only box; the expert already treats an occluded
+reading as `None`).
+
+All BatteriesSort data so far (pilot, round 1) has the leak: its observability labels and G2 mean nothing.
+Re-collect before any G2 or unobservable-stratum claim. `collect.py` writes to `data/pol/<task>` and Stage A reads
+every episode there, so on the remote move the old episodes out first (e.g. `data/pol_leaky/BatteriesSort-3`),
+then run `ROUND=round2 SEED_BASE=20000 TASKS=BatteriesSort-3` (features of a round use their own PCA, so either
+re-extract SealedBin/GatherInject too or reuse the round-1 PCA for the new BatteriesSort episodes). Acceptance:
+the planb-check B probe (train visible → shutter-down, broken vs working) drops from 0.94 to ≈ 0.5.
+
 ## Next (decision)
 
 Six steps (four objectives, a stronger residual, this prototype): the unsupervised outcome clustering does not
@@ -298,8 +321,7 @@ remove one without the other.
    signal, not more labels.
 2. Last cheap try on the residual route, BatteriesSort only: ridge on the pooled pre-window (λ=0.01) as the scene
    head, retrain, gates. Expected small effect (place 0.75 → 0.65).
-3. BatteriesSort occluder fix (needed for G2 and the unobservable stratum under either plan): hide the lit bulb
-   while occluded, re-collect BatteriesSort.
+3. BatteriesSort occluder: **code fixed 2026-11-03** (section above); re-collect BatteriesSort on the remote.
 4. Independent: per-task Markov head (N1), the Stage B producer should pass the task:kind group to the outcome
    model (now whole bank).
 
