@@ -106,7 +106,7 @@ def test_one_reencounter_splits_evidence_between_two_close_entries():
     w = led.association(np.zeros(3), np.ones(64) / 8.0)
     ll = np.array([0.0, 3.0, -3.0])
     led.resolve(w, np.stack([ll, ll]))
-    shift = sum(np.log(e.probs[1] / e.probs[2]) - 0.0 for e in led.entries)
+    shift = sum(np.log(e.probs[1] / e.probs[2]) for e in led.entries)
     full = Ledger(K=1, M=M)
     full.write(entry(0))
     full.resolve(np.array([1.0]), ll[None])
@@ -136,8 +136,13 @@ def test_consumed_entry_is_evicted_first():
 
 def test_resolved_unconsumed_entry_outlives_pending_low_value():
     led = Ledger(K=2, M=M)
-    led.write(entry(0, probs=(0.9, 0.05, 0.05)))  # pending but nearly certain: low value, oldest
-    led.write(entry(1, probs=(0.4, 0.3, 0.3)))
-    assert led.entries[led.evict_index()].t == 0
-    led.mark_consumed(1)
+    led.write(entry(0, probs=(0.9, 0.05, 0.05)))  # resolved, unconsumed, oldest
+    led.write(entry(1, probs=(0.4, 0.3, 0.3)))  # ambiguous pending
     assert led.entries[led.evict_index()].t == 1
+    led.mark_consumed(0)
+    assert led.entries[led.evict_index()].t == 0
+
+
+def test_unknown_eviction_raises():
+    with pytest.raises(ValueError):
+        Ledger(K=2, M=M, eviction="lru")

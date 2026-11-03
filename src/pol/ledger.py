@@ -53,6 +53,8 @@ class Ledger:
         if not 1 <= M <= M_MAX:
             raise ValueError(f"M must be in 1..{M_MAX}")
         self.K, self.M, self.eta, self.omega0, self.rho, self.beta = K, M, eta, omega0, rho, beta
+        if eviction not in ("value", "entropy", "fifo"):
+            raise ValueError(f"unknown eviction {eviction!r}")
         self.eviction, self.p_null = eviction, p_null
         self.reset()
 
@@ -109,9 +111,9 @@ class Ledger:
         return self._evict_by_value()
 
     def keep_value(self, i):
-        """0 once consumed; otherwise 1 - max_z p(z), i.e. the chance the entry still changes a decision."""
+        """0 once consumed; otherwise max_z p(z): a resolved verdict not yet used outranks an ambiguous one."""
         e = self.entries[i]
-        return 0.0 if e.consumed else float(1.0 - e.probs.max())
+        return 0.0 if e.consumed else float(e.probs.max())
 
     def _evict_by_value(self):
         """Drop the entry least worth keeping (consumed first); among equal values, the oldest."""
