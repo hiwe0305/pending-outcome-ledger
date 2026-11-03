@@ -310,6 +310,38 @@ then run `ROUND=round2 SEED_BASE=20000 TASKS=BatteriesSort-3` (features of a rou
 re-extract SealedBin/GatherInject too or reuse the round-1 PCA for the new BatteriesSort episodes). Acceptance:
 the planb-check B probe (train visible → shutter-down, broken vs working) drops from 0.94 to ≈ 0.5.
 
+### Round 2 and the POL-V gates P0/P1 (2026-11-03, remote)
+
+Round 2 had already been run at `eb03bb7` (14:44–19:18): BatteriesSort re-collected with the fixed occluder (300
+kept, seeds 10000+, leaky pilot + round-1 episodes moved to `data/pol_leaky/BatteriesSort-3`), new PCA on all three
+tasks (`data/features_round2`), legacy Stage A + gates (exit 2). Not re-run. On branch `pol-v`:
+
+`scripts/pol/probe_views.py` (decision target = positive hidden failure vs everything else; mean v1/v2 tokens;
+n labelled train events per task, 20 draws, val AUROC; `runs/round2/probe_views_n{32,100000}.json`):
+
+| task (val n / pos) | labels | v1 | v2 | v1⊕v2 |
+|---|---|---|---|---|
+| SealedBin, behind vs rest (72 / 9) | 32 | 0.65 ± 0.14 | 0.59 ± 0.14 | 0.63 ± 0.16 |
+| | all | 0.79 | 0.70 | 0.75 |
+| GatherInject, failure vs in (85 / 15) | 32 | 0.99 | 0.67 | 0.96 |
+| | all | 1.00 | 0.83 | 1.00 |
+| BatteriesSort, broken vs working+spill (84 / 30) | 32 | 0.93 ± 0.03 | 0.64 ± 0.03 | 0.90 ± 0.04 |
+| | all | 0.96 | 0.62 | 0.96 |
+
+P1 occluder check (`logs/round2/p1check.log`, BatteriesSort inserts broken vs working, mean v1): train visible →
+shutter-down **0.557** (round 1: 0.94; gate ≤ 0.60 ✓); 5-fold CV inside shutter-down 0.728 (n = 179, 86 broken;
+round 1: 0.95) — mostly fixed, a residual cue remains (not identified); visible control 0.964.
+
+Reading:
+- **v1⊕v2 never beats v1** (gate P0 "v1⊕v2 − max(v1, v2) ≥ 0.05" fails on all three tasks). In this data the
+  re-encounter view adds nothing a linear probe can use: BatteriesSort's v1 already separates broken from spill
+  (0.93–0.96, 80 % of inserts visible), and when the shutter is down neither view shows the reading (the lamp is off at
+  the re-encounter). Passive late resolution (H4) is therefore not supported by U-Suite as built.
+- What resolves an occluded test is a **new test** (an action), not a later view: the VOI "probe" branch of POL-V
+  (plan §2.5), not `Ledger.resolve` on a re-encounter. The paper's claim should move from late explaining-away to
+  observability-aware, value-of-information verification; H4 needs either a redesigned cue or to be dropped.
+- SealedBin remains signal-limited (0.79 with all labels, 9 val positives).
+
 ## Next (decision)
 
 Six steps (four objectives, a stronger residual, this prototype): the unsupervised outcome clustering does not
