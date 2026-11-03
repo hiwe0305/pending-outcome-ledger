@@ -1,12 +1,14 @@
 """Precompute frozen SigLIP features for every collected episode (policy venv, GPU).
 
     python scripts/pol/precompute_features.py --data data/pol --tasks BatteriesSort-3 SealedBin-5 ... \
-        --out data/features [--fit-pca] [--pca-frames 50000]
+        --out data/features [--fit-pca | --pca PATH] [--pca-frames 50000]
 
 --fit-pca (run once, on train episodes of all given tasks) fits the token PCA (1152 -> 256) and the
 pooled projection (2304 -> 50, used by the baseline memories), then every episode is encoded:
 pooled features for all frames, PCA tokens at policy-call frames and event windows (pol.data.token_frames).
 The gripper FSM thresholds of each task are calibrated on its episodes and saved next to the features.
+--pca PATH reuses an existing PCA (e.g. round 1's) instead: pca.npz, and proj50.npz when it sits next to PATH,
+are copied into --out, so features stay comparable across rounds.
 Episodes are processed one at a time, so RAM stays at about one episode plus the model.
 """
 import argparse, json, sys
@@ -16,6 +18,20 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+
+
+def adopt_pca(src, out):
+    """Copy an existing PCA (and the proj50.npz beside it, if any) into the feature dir `out`."""
+    import shutil
+    src, out = Path(src), Path(out)
+    if not src.is_file():
+        raise FileNotFoundError(f"--pca {src}: no such file")
+    out.mkdir(parents=True, exist_ok=True)
+    if src.resolve() != (out / "pca.npz").resolve():
+        shutil.copyfile(src, out / "pca.npz")
+    side = src.with_name("proj50.npz")
+    if side.is_file() and side.resolve() != (out / "proj50.npz").resolve():
+        shutil.copyfile(side, out / "proj50.npz")
 
 
 def episode_files(data, task, split):
@@ -64,7 +80,9 @@ def main():
     p.add_argument("--tasks", nargs="+", required=True)
     p.add_argument("--out", default=str(ROOT / "data/features"))
     p.add_argument("--weights", default=str(ROOT / "checkpoints/pi0_siglip.pt"))
-    p.add_argument("--fit-pca", action="store_true")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--fit-pca", action="store_true")
+    g.add_argument("--pca", default=None, help="reuse this existing pca.npz (copied into --out) instead of fitting")
     p.add_argument("--pca-frames", type=int, default=load_config(ROOT / "configs/pol/stage_a.yaml")["features"]["pca_fit_frames"])
     p.add_argument("--batch", type=int, default=64)
     p.add_argument("--device", default="cuda")
@@ -72,7 +90,10 @@ def main():
     store = FeatureStore(a.out)
     store.root.mkdir(parents=True, exist_ok=True)
     extractor = SiglipExtractor(a.weights, device=a.device, batch=a.batch)
-    if a.fit_pca or not (store.root / "pca.npz").exists():
+    if a.pca:
+        adopt_pca(a.pca, store.root)
+        print(f"[features] PCA taken from {a.pca}", flush=True)
+    elif a.fit_pca or not (store.root / "pca.npz").exists():
         train = [f for t in a.tasks for f in episode_files(a.data, t, "train")]
         pca, proj = fit_projections(extractor, train, a.pca_frames)
         pca.save(store.root / "pca.npz")
