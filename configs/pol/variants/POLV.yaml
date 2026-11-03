@@ -1,0 +1,12 @@
+memory:
+  name: POLV
+  K: 8
+evidence:            # few-label evidence heads, prior and omega-hat (pol.evidence); lr as Stage A
+  n_labels: 32       # labelled events per task (stratified, seeded)
+  n_val: 16          # separate labelled val events per task (temperature)
+  E: 5
+  label_smoothing: 0.05
+  steps: 2000        # per phase: heads, prior, omega
+  lr: 3.0e-4
+  batch_size: 64
+  d_ctx: 128

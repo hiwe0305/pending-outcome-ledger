@@ -64,7 +64,8 @@ def event_tuples(ep, pooled, tokens, th, rho):
                 "pos1": ep["proprio"][e.t:e.t + POST, :3].astype(np.float32),
                 "has_v2": False, "v2": np.zeros((N_TIME, 32, 256), np.float32), "w2": np.zeros(16, np.float32),
                 "act2": np.zeros((POST, 7), np.float32), "pos2": np.zeros((POST, 3), np.float32),
-                "pooled2": p_pre.astype(np.float32)}
+                "pooled2": p_pre.astype(np.float32),
+                "early": np.asarray(pooled[e.t:e.t + 2], np.float32)}  # first 2 post-event frames (POL-V omega)
         r = reencounter_index(events, j, rho)
         if r is not None and events[r].t + POST <= T:
             tr = events[r].t
@@ -108,6 +109,8 @@ def collate_events(items):
 
     keys = ["pooled", "act", "v1", "act1", "pos1", "v2", "act2", "pos2", "w2", "pooled2"]
     batch = {k: torch.as_tensor(np.stack([it[k] for it in items])) for k in keys}
+    if all("early" in it for it in items):
+        batch["early"] = torch.as_tensor(np.stack([it["early"] for it in items]))
     batch["has_v2"] = torch.as_tensor([it["has_v2"] for it in items])
     batch["kind"] = torch.as_tensor([KINDS.index(it["kind"]) for it in items])
     batch["group"] = torch.as_tensor([event_group(it.get("task", ""), it["kind"]) for it in items])

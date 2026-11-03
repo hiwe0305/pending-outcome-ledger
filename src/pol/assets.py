@@ -12,9 +12,10 @@ import torch
 
 from . import baseline_models as bm
 from .features import PCA
+from .evidence import EvidenceHeads
 from .outcome_model import OutcomeModel
 
-CLASSES = {c.__name__: c for c in [OutcomeModel, bm.KeyframeScorer, bm.RecurrentMemory, bm.ActionPredictor,
+CLASSES = {c.__name__: c for c in [OutcomeModel, EvidenceHeads, bm.KeyframeScorer, bm.RecurrentMemory, bm.ActionPredictor,
                                     bm.FeaturePredictor, bm.StateMemCell, bm.VerifyHead, bm.MarkovHead]}
 
 

@@ -23,6 +23,7 @@ from .config import load_config, provenance
 from .data import collate_events, hard_negative_batches, split_seeds, stage_a_items
 from .episodes import load_episodes
 from .features import PCA, FeatureStore
+from .evidence import CLASSES, EvidenceHeads, fit_evidence, item_id, sample_labelled
 from .outcome_model import OutcomeModel, em_step
 from .wandb_utils import init_run
 
@@ -114,6 +115,41 @@ def eval_pol(model, items, device, sigma2=None):
     om = auroc(-omega[[i for i, _ in obs]], [not o for _, o in obs]) if obs else None
     model.train()
     return {"loss": out["loss"].item(), "nmi": nmi, "omega_auroc": om}
+
+
+# --------------------------------------------------------------------- POLV
+def train_polv(a, cfg, items_tr, items_va, run, steps):
+    """Evidence heads on n_labels stratified events per task, temperature on n_val others (val split, else the
+    unlabelled train rest), prior and omega-hat on all train events. CPU: the heads are small."""
+    ec = load_config(ROOT / "configs/pol/variants/POLV.yaml")["evidence"]
+    fam = {it["task"]: it["family"] for it in items_tr}
+    kw = {"n_classes": {t: len(CLASSES[f]) for t, f in fam.items()}, "E": ec["E"], "d_tok": cfg["model"]["d_tok"],
+          "d_feat": cfg["model"]["d_feat"], "n_time": cfg["model"]["n_time"], "n_tok": cfg["model"]["n_tok"], "d_ctx": ec["d_ctx"]}
+    lab = sample_labelled(items_tr, ec["n_labels"], a.seed)
+    val = sample_labelled(items_va, ec["n_val"], a.seed) or sample_labelled(items_tr, ec["n_val"], a.seed, {item_id(i) for i in lab})
+
+    def by_task(items, label=True):
+        out = {}
+        for t in fam:
+            sel = [it for it in items if it["task"] == t]
+            if sel:
+                b = collate_events(sel)
+                b["task"] = t
+                if label:
+                    b["label"] = torch.as_tensor([it["outcome"] for it in sel])
+                out[t] = b
+        return out
+
+    torch.manual_seed(a.seed)
+    model = fit_evidence(EvidenceHeads(**kw), by_task(lab), by_task(items_tr, False), steps=steps, lr=ec["lr"],
+                         label_smoothing=ec["label_smoothing"], batch_size=ec["batch_size"], seed=a.seed,
+                         val=list(by_task(val).values()), log=run.log)
+    metrics = {"n_labelled": len(lab), "n_val_labelled": len(val), "temp_v1": float(model.temp[0]), "temp_v2": float(model.temp[1])}
+    with torch.no_grad():
+        for t, b in by_task(val).items():
+            metrics[f"val_acc_v1/{t}"] = float((model.q_v1(t, b["pooled"], b["act"], b["v1"]).argmax(1) == b["label"]).float().mean())
+    prov = {"label_seed": a.seed, "labelled_ids": {"train": [item_id(i) for i in lab], "val": [item_id(i) for i in val]}}
+    return {"evidence_heads": model}, {"evidence_heads": kw}, {}, {}, metrics, prov
 
 
 # ---------------------------------------------------------------- baselines
@@ -260,7 +296,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     overrides = {**({"model.M": a.M} if a.M else {}), **({"train.batch_size": a.batch_size} if a.batch_size else {})}
     cfg = load_config(a.config, overrides or None)
-    a.steps = a.steps or cfg["train"]["steps"]
+    steps_arg, a.steps = a.steps, a.steps or cfg["train"]["steps"]
     torch.manual_seed(a.seed)
     np.random.seed(a.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -275,6 +311,11 @@ def main(argv=None):
     metrics = {"events_train": len(items_tr), "events_val": len(items_va)}
     if a.variant == "POL":
         mods, kw, sc, arr, m = train_pol(a, cfg, items_tr, items_va, run, device)
+    elif a.variant == "POLV":
+        steps = steps_arg or load_config(ROOT / "configs/pol/variants/POLV.yaml")["evidence"]["steps"]
+        mods, kw, sc, arr, m, label_prov = train_polv(a, cfg, items_tr, items_va, run, steps)
+        Path(a.out).mkdir(parents=True, exist_ok=True)
+        Path(a.out, "assets.json").write_text(json.dumps({"provenance": prov, **label_prov}, indent=1, default=str))
     elif a.variant in LEARNED:
         mods, kw, sc, arr, m = train_baseline(a, a.variant, cfg, store, proj, items_tr, run, device)
     else:

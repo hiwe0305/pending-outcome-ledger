@@ -52,7 +52,7 @@ def test_stage_defaults_match_spec():
 def test_every_variant_config_loads():
     names = {p.stem for p in (ROOT / "configs/pol/variants").glob("*.yaml")}
     assert names == {"B0", "Frames", "Random", "Markov", "AURA", "StateMem", "CheckVLA",
-                     "CheckFIFO", "AGM", "KEM", "MU", "POL", "Oracle"}
+                     "CheckFIFO", "AGM", "KEM", "MU", "POL", "POLV", "Oracle"}
     for n in names:
         cfg = load_config(ROOT / f"configs/pol/variants/{n}.yaml")
         assert cfg["memory"]["name"] == n and cfg["memory"]["K"] == 8
