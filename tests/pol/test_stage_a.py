@@ -73,8 +73,9 @@ def test_group_score_is_the_mean_over_tasks():
     assert g["markov"] == pytest.approx(0.6) and g["pol_fake_actions"] is None
 
 
-def write_dataset(root, n_eps=12, T=140, seed=0):
-    """SealedBin-3-shaped episodes: grasp, release over the bin, re-encounter; outcome in the logs."""
+def write_dataset(root, n_eps=12, T=140, seed=0, balanced=False, rgb_hw=128):
+    """SealedBin-3-shaped episodes: grasp, release over the bin, re-encounter; outcome in the logs.
+    balanced: outcome and lid shutter alternate by seed (both classes, observable and occluded events)."""
     from pol.features import PCA, FeatureStore
 
     rng = np.random.default_rng(seed)
@@ -89,12 +90,15 @@ def write_dataset(root, n_eps=12, T=140, seed=0):
         proprio = np.zeros((T, 7), np.float32)
         proprio[:, 6] = w
         out = int(rng.integers(2)) * 3  # 0 = in the bin, 3 = hidden behind it
-        logs = [{"release_cube": -1, "failure": 0, "cube_location": [0, 0, 0], "shutter": bool(rng.random() < 0.3 and 40 <= t < 60)}
+        shut = bool(rng.random() < 0.3)
+        if balanced:
+            out, shut = (s % 2) * 3, (s // 2) % 2 == 0
+        logs = [{"release_cube": -1, "failure": 0, "cube_location": [0, 0, 0], "shutter": bool(shut and 40 <= t < 60)}
                 for t in range(T)]
         logs[40]["release_cube"] = 0
         for t in range(41, T):
             logs[t]["cube_location"] = [out, 0, 0]
-        np.savez(data / "SealedBin-3" / f"{s:06d}.npz", rgb=np.zeros((T, 128, 128, 6), np.uint8), proprio=proprio,
+        np.savez(data / "SealedBin-3" / f"{s:06d}.npz", rgb=np.zeros((T, rgb_hw, rgb_hw, 6), np.uint8), proprio=proprio,
                  action=rng.normal(size=(T, 7)).astype(np.float32), timestamp=np.arange(T, dtype=np.float32), language="x")
         (data / "SealedBin-3" / f"{s:06d}.log.json").write_text(json.dumps(
             {"seed": s, "split": "train", "task": "SealedBin-3", "logs": logs}))
@@ -231,6 +235,40 @@ def test_polv_gates_end_to_end(dataset, tmp_path, monkeypatch):
     assert sc["n_calibration_excluded"]["SealedBin-3"] > 0 and sc["per_task"]["SealedBin-3"]["n"] == 0
     assert "n" in sc["unrevealed"] or "pooled" in sc["unrevealed"]
     assert "omega_auroc" in rep["scores"] and "occluder_auroc" in rep["scores"] and "ece_per_task" in rep["scores"]
+
+
+def test_polv_gates_score_a_non_empty_heldout_val(tmp_path, monkeypatch):
+    """16 calibration ids per task are excluded from scoring; with a val split bigger than that the scored
+    branches (scores(), omega/occluder macros, decide(mode="polv")) all run on real held-out events."""
+    import pol.data
+    import pol.train_stage_a
+    from pol.gates import main as gates_main
+    from pol.train_stage_a import main
+
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+    orig = pol.data.split_seeds
+    half = lambda seeds: orig(seeds, val_frac=0.6)
+    monkeypatch.setattr(pol.data, "split_seeds", half)
+    monkeypatch.setattr(pol.train_stage_a, "split_seeds", half)
+    data, feats = write_dataset(tmp_path / "ds", n_eps=36, balanced=True, rgb_hw=4)  # 22 val events, 1 gated per episode
+    main(["--variant", "POLV", "--data", data, "--features", feats, "--tasks", "SealedBin-3", "--out", str(tmp_path / "POLV"),
+          "--steps", "3"])
+    code = gates_main(["--polv", str(tmp_path / "POLV"), "--data", data, "--features", feats, "--tasks", "SealedBin-3",
+                       "--out", str(tmp_path / "gates.json")])
+    rep = json.loads((tmp_path / "gates.json").read_text())
+    sc, v = rep["scores"], rep["verdict"]
+    assert code in (0, 2, 3) and v["mode"] == "polv"
+    assert not [n for n in v["notes"] if "missing" in n], v["notes"]
+    for t, n_ex in sc["n_calibration_excluded"].items():
+        assert n_ex == 16
+        assert sc["per_task"][t]["n"] > 0
+    assert sc["n_val_events"] > 16 and sc["n_val_scored"] > 0
+    assert sc["n_val_scored"] == sc["n_val_events"] - sum(sc["n_calibration_excluded"].values())
+    unit = lambda x: x is not None and np.isfinite(x) and 0.0 <= x <= 1.0
+    for k in ("pol", "pol_shuffled", "frozen_v1", "agm_same_labels"):
+        assert unit(sc["unrevealed"][k]), (k, sc["unrevealed"])
+    assert unit(sc["omega_auroc"]) and unit(sc["occluder_auroc"])
+    assert sc["ece"] is not None and np.isfinite(sc["ece"])
 
 
 @pytest.mark.parametrize("missing", ["frozen_v1", "ece", "occluder_auroc", "omega_auroc", "pol", "pol_shuffled"])
