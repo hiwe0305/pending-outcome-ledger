@@ -104,10 +104,19 @@ def run_episode(env, prim, model, deferred, persistent, max_retests, rng):
         prim.move_pose_xyz(x, y, prim.z_socket_approach)
 
     def probe_empty_socket():
+        # Step for step the first attempt of try_extract_from_socket until the fingers have closed: the robot only
+        # learns of a spill from the fingers closing on nothing, so up to then a spill and a seated battery move
+        # the same (a different reach let v1 read every spill from the arm).
+        from jem.envs.mikasa_primitives import SOCKET_PICK_PREOPEN_STATE
+
         x, y = float(prim.socket_pos[0]), float(prim.socket_pos[1])
-        prim.move_via_clearance(x, y, prim.z_socket_approach, prim.z_transport)
-        prim.move_pose_xyz(x, y, prim.z_insert_socket)
-        prim.close_gripper_safe(t=3)
+        prim.move_pose_xyz(x, y, prim.z_socket_approach)
+        prim.set_gripper_state_safe(SOCKET_PICK_PREOPEN_STATE, t=5)
+        prim.hold_steps(4)
+        prim.move_pose_xyz(x, y, float(prim.socket_pos[2]) - 0.008)  # base_pick_z (socket z - 0.002) + dz (-0.006)
+        prim.hold_steps(3)
+        prim.close_gripper_safe(t=12)
+        prim.hold_steps(3)
         prim.open_gripper_safe(t=2)
         prim.move_pose_xyz(x, y, prim.z_socket_approach)
 

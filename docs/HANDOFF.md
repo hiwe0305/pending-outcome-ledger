@@ -313,8 +313,9 @@ the planb-check B probe (train visible → shutter-down, broken vs working) drop
 ### Round 2 and the POL-V gates P0/P1 (2026-11-03, remote)
 
 Round 2 had already been run at `eb03bb7` (14:44–19:18): BatteriesSort re-collected with the fixed occluder (300
-kept, seeds 10000+, leaky pilot + round-1 episodes moved to `data/pol_leaky/BatteriesSort-3`), new PCA on all three
-tasks (`data/features_round2`), legacy Stage A + gates (exit 2). Not re-run. On branch `pol-v`:
+kept, seeds 10000+, leaky pilot + round-1 episodes moved to `data/pol_leaky/BatteriesSort-3`), features in
+`data/features_round2` with the **round-1 PCA** (`pca.npz` copied, identical) — only BatteriesSort was re-extracted,
+SealedBin-3 / GatherInject-3 there are symlinks to `features_round1` — legacy Stage A + gates (exit 2). Not re-run. On branch `pol-v`:
 
 `scripts/pol/probe_views.py` (decision target = positive hidden failure vs everything else; mean v1/v2 tokens;
 n labelled train events per task, 20 draws, val AUROC; `runs/round2/probe_views_n{32,100000}.json`):
@@ -341,6 +342,50 @@ Reading:
   (plan §2.5), not `Ledger.resolve` on a re-encounter. The paper's claim should move from late explaining-away to
   observability-aware, value-of-information verification; H4 needs either a redesigned cue or to be dropped.
 - SealedBin remains signal-limited (0.79 with all labels, 9 val positives).
+
+#### P1 with the roadmap's own sub-gates, paired with the leaky data (`scripts/pol/probe_p1.py`)
+
+Logistic probes (C=0.1) on v1/v2 tokens, mean over blocks and tokens ("mean") or one mean per time block
+("blocks"); 95 % CIs bootstrap over val episodes. `runs/round2/probe_p1.json` (all round-2 episodes) and
+`probe_p1_paired_{fixed,leaky}.json`: the 288 seeds kept in both round 2 and round 1 (12 + 12 differ — the bigger
+shutter box changes a few episodes), round-2 logs with round-2 features vs round-1 logs with round-1 features.
+
+| | fixed (all) | fixed (paired) | leaky (paired) | gate |
+|---|---|---|---|---|
+| leak: train visible → shutter-down, mean / blocks | 0.56 / **0.60** [0.52, 0.68] | 0.55 / 0.59 | 0.95 / 0.94 | ≤ 0.60 |
+| v1 broken vs spill (32 labels and all) | **1.00** | 1.00 | 1.00 | ≤ 0.65 ✗ |
+| v2 working vs broken, all labels | 0.40–0.44 | 0.40–0.41 | 0.38 | ≤ 0.65 ✓ |
+| decision v1⊕v2, all labels (v1 alone) | 0.96 (0.95–0.96) | 0.95–0.96 | 0.97–0.98 | ≥ 0.85 ✓ |
+| decision, shutter-down val only (n = 22, 10 pos.): v1 / v1⊕v2 | 0.79–0.83 / 0.81–0.83 | | 0.94–0.95 | |
+
+- The fix works on the same episodes: 0.95 → 0.55. A small residual stays (CI lower bound 0.52 > 0.5, block
+  features exactly at the gate); not identified.
+- **P1 fails on its premise, not on the leak**: v1 tells broken from spill perfectly. A spill teleports the battery
+  into the covered catch tray, so the socket is visibly empty (and the stage stays INSERT, so the expert's next
+  actions probably differ too; not checked); `COVER_CATCH` hides the tray, not the empty socket. v1 then has the whole decision on visible
+  inserts, and on shutter-down inserts it still knows spill vs seated (0.8) while neither view reads the lamp.
+- Restoring H4 in BatteriesSort would need the socket hidden as well (a visual-only cover, the lamp above it) and an
+  expert that does not react to a spill before the re-encounter; then re-collect and re-run this probe. Per the
+  roadmap rule a P1 fail means Plan D; that fix is the only alternative that keeps H4.
+
+#### Spill made invisible to v1 (2026-11-04), round 3 running
+
+Where v1 read the spill (round-2 features, broken vs spill, linear probe train → val): v1 time block 0 / 1 / 2 / 3
+0.98 / 1.00 / 1.00 / 1.00, the 2 pooled frames right after the release 0.997, the 16 post actions or positions 1.00
+(first 8 steps: 0.71 / 0.65). Two channels, both fixed (the seated battery under the socket hood was already hidden):
+- **picture**: a spilled battery rests in the catch tray with its top at 0.072 m, the cover reached 0.06 m.
+  `COVER_HALF_SIZE` z 0.03 → 0.045. New `check_envs.check_spill_hidden` renders the battery seated vs in the tray:
+  70 changed pixels with the old cover, 0 now.
+- **expert motion**: after a spill the expert probed the socket with its own reach (straight down to
+  `z_insert_socket`, close 3 steps), a seated battery got `try_extract_from_socket`. `probe_empty_socket` now repeats
+  that primitive's first attempt step for step until the fingers have closed (pre-open 5, hold 4, socket z − 8 mm,
+  hold 3, close 12, hold 3). Trial on the remote (12 episodes, 11 spills / 36 seated inserts, TCP relative to the
+  insert step): over the first 46 steps the class means differ by 1–3 mm against a 6–8 mm spread; the gripper width
+  first differs at step ≈ 29, i.e. at the re-encounter, outside v1 (16 steps).
+
+Round 3 on the remote (code = 5f4c37b + these uncommitted changes, copied by scp): round-2 BatteriesSort moved to
+`data/pol_round2/BatteriesSort-3`; `ROUND=round3 TASKS=BatteriesSort-3 SEED_BASE=10000 PCA_FROM=data/features_round1/pca.npz`
+then `probe_p1.py` → `runs/round3/probe_p1.json` (`logs/round3/run_p1.sh`, progress in `logs/round3/progress.log`).
 
 ## Next (decision)
 

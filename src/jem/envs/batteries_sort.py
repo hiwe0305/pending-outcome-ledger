@@ -36,7 +36,9 @@ class BatteriesSortBaseEnv(BatteriesCheckerVLABaseEnv):
     STICK_STEPS = 15
     HELDOUT = ()
     COVER_CATCH = False  # POL: a visual-only cover hides the catch tray, so a spill is never seen
-    COVER_HALF_SIZE = (0.042, 0.042, 0.03)
+    # Taller than a battery resting in the tray (top 0.072 m): at 0.03 the battery stuck out 1.2 cm and v1 read
+    # every spill (broken vs spill AUROC 1.00 in round 2).
+    COVER_HALF_SIZE = (0.042, 0.042, 0.045)
     P_WORKING = 0.5
     LAMP_MODE = "persistent"  # or "flash"
     DEFERRED = False

@@ -63,6 +63,31 @@ def check_lamp_occlusion(env):
     return failures
 
 
+def check_spill_hidden(env):
+    """A spilled battery (in the covered catch tray) and a seated one (under the socket hood) must render the same:
+    only the re-encounter may tell them apart. Round 2: the battery stuck out of the cover, v1 read every spill."""
+    import torch
+
+    frames = {}
+    for where in ("socket", "catch"):
+        env.reset(seed=0)
+        u = env.unwrapped
+        u.action_stage[0] = u.STAGE_RETURN  # no insert event, no lamp
+        u.lamp_afterglow_steps[0] = 0
+        pose = u.batteries[0].pose.raw_pose.clone()
+        if where == "socket":
+            pose[0, :3] = u.socket_slot_pos[0]
+        else:
+            pose[0, :3] = u.catch_pos[0] + torch.tensor([0, 0, u.CATCH_HALF_SIZE[2] + u.BATTERY_HALF_HEIGHT], device=u.device)
+        pose[0, 3:7] = u.battery_quat
+        u.batteries[0].pose = pose
+        obs, *_ = env.step(env.action_space.sample() * 0)
+        frames[where] = obs["rgb"][0].cpu().numpy().astype(np.int16)
+    diff = int((np.abs(frames["socket"] - frames["catch"]) > 8).sum())
+    print(f"  battery seated vs in the catch tray, changed pixels (both cameras): {diff}")
+    return [f"spilled battery visible ({diff} pixels)"] if diff else []
+
+
 def check(task):
     failures = []
     env, obs = make(task, "train")
@@ -81,6 +106,7 @@ def check(task):
         if u.LAMP_MODE != "flash" or not u.DEFERRED:
             failures.append("BatteriesSort must use flash lamp and deferred sorting")
         failures += check_lamp_occlusion(env)
+        failures += check_spill_hidden(env)
         obs, _ = env.reset(seed=0)
     for _ in range(50):
         obs, _, _, _, info = env.step(env.action_space.sample())
