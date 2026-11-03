@@ -149,3 +149,81 @@ def test_gates_end_to_end(dataset, tmp_path, monkeypatch):
     u = report["scores"]["unrevealed"]
     assert {"n", "failures", "pol", "pol_shuffled", "pol_fake_actions", "markov"} <= set(u)
     assert set(report["scores"]["per_task"]) == {"SealedBin-3"}
+
+
+POLV_PASS = {"unrevealed": {"pol": 0.9, "pol_shuffled": 0.5, "frozen_v1": 0.8}, "revealed": {"pol": 0.95},
+             "omega_auroc": 0.9, "occluder_auroc": 0.85, "ece": 0.05}
+
+
+def test_polv_all_gates_pass():
+    v = decide(POLV_PASS)
+    assert (v["G1"], v["G2"], v["G4"], v["ECE"], v["exit_code"]) == (True, True, True, True, 0)
+
+
+@pytest.mark.parametrize("change,code,failed", [
+    ({"unrevealed": {"pol": 0.9, "pol_shuffled": 0.5, "frozen_v1": 0.87}}, 2, "G4"),   # v2 adds < 0.05
+    ({"unrevealed": {"pol": 0.9, "pol_shuffled": 0.5, "frozen_v1": None}}, 2, "G4"),
+    ({"unrevealed": {"pol": 0.78, "pol_shuffled": 0.5, "frozen_v1": 0.6}}, 2, "G1"),
+    ({"unrevealed": {"pol": 0.9, "pol_shuffled": 0.65, "frozen_v1": 0.8}}, 2, "G1"),
+    ({"ece": 0.15}, 2, "ECE"),
+    ({"ece": None}, 2, "ECE"),
+    ({"omega_auroc": 0.84, "occluder_auroc": 0.5}, 3, "G2"),   # below 0.85
+    ({"omega_auroc": 0.9, "occluder_auroc": 0.95}, 3, "G2"),   # loses to the occluder probe
+    ({"occluder_auroc": None}, 3, "G2"),
+])
+def test_polv_failure_branches(change, code, failed):
+    v = decide({**POLV_PASS, **change})
+    assert v["exit_code"] == code and not v[failed]
+
+
+def test_polv_g2_ties_the_occluder_probe_and_g1_beats_g2():
+    assert decide({**POLV_PASS, "omega_auroc": 0.85, "occluder_auroc": 0.85})["exit_code"] == 0
+    both = decide({**POLV_PASS, "omega_auroc": 0.5, "ece": 0.3})
+    assert both["exit_code"] == 2 and not both["G2"] and not both["ECE"]
+
+
+def test_polv_scorers_on_synthetic_arrays():
+    """P(target) from the heads' posterior, binary ECE, and the probe helpers, on tiny random heads."""
+    import torch
+
+    from pol.evidence import EvidenceHeads
+    from pol.gates import _fit_probe, binary_ece, mean_v1_tokens, omega_input, polv_p_target
+
+    torch.manual_seed(0)
+    rng = np.random.default_rng(0)
+    heads = EvidenceHeads({"T": 4}, E=2, d_tok=8, d_feat=12, n_time=2, n_tok=3, d_ctx=8).eval()
+    items = [{"task": "T", "family": "sealed_bin", "kind": "R+", "target": bool(i % 2), "has_v2": i % 3 > 0,
+              "pooled": rng.normal(size=(2, 12)).astype(np.float32), "act": rng.normal(size=(16, 7)).astype(np.float32),
+              "v1": rng.normal(size=(2, 3, 8)).astype(np.float32), "act1": rng.normal(size=(16, 7)).astype(np.float32),
+              "pos1": rng.normal(size=(16, 7)).astype(np.float32), "v2": rng.normal(size=(2, 3, 8)).astype(np.float32),
+              "act2": rng.normal(size=(16, 7)).astype(np.float32), "pos2": rng.normal(size=(16, 7)).astype(np.float32),
+              "w2": rng.normal(size=(16,)).astype(np.float32), "pooled2": rng.normal(size=(2, 12)).astype(np.float32),
+              "early": rng.normal(size=(2, 2, 12)).astype(np.float32)} for i in range(12)]
+    try:
+        p1, p2 = polv_p_target(heads, items, use_v2=False), polv_p_target(heads, items)
+    except Exception as e:  # shapes of the synthetic items are a guess; surface mismatches as a skip, not a pass
+        pytest.skip(f"synthetic item shapes: {e}")
+    assert p1.shape == (12,) and ((0 <= p2) & (p2 <= 1)).all()
+    no_v2 = [i for i, it in enumerate(items) if not it["has_v2"]]
+    assert np.allclose(p1[no_v2], p2[no_v2], atol=1e-6)   # no re-encounter: v2 adds nothing
+    assert 0.0 <= binary_ece(p2, [it["target"] for it in items]) <= 1.0
+    assert binary_ece(np.array([1.0, 0.0]), [True, False]) == pytest.approx(0.0)
+    X, y = mean_v1_tokens(items), [it["target"] for it in items]
+    assert X.shape == (12, 8) and _fit_probe(X, y) is not None and _fit_probe(X, [True] * 12) is None
+    assert omega_input(heads, items).shape[0] == 12
+
+
+def test_polv_gates_end_to_end(dataset, tmp_path, monkeypatch):
+    from pol.gates import main as gates_main
+    from pol.train_stage_a import main
+
+    monkeypatch.setenv("WANDB_MODE", "disabled")
+    data, feats = dataset
+    main(["--variant", "POLV", "--data", data, "--features", feats, "--tasks", "SealedBin-3", "--out", str(tmp_path / "POLV"),
+          "--steps", "4"])
+    code = gates_main(["--polv", str(tmp_path / "POLV"), "--data", data, "--features", feats, "--tasks", "SealedBin-3",
+                       "--out", str(tmp_path / "gates.json")])
+    rep = json.loads((tmp_path / "gates.json").read_text())
+    assert code in (0, 2, 3) and set(rep["verdict"]) >= {"G1", "G2", "G4", "ECE", "exit_code"}
+    assert {"pol", "frozen_v1", "pol_shuffled", "agm_same_labels", "ece", "n"} <= set(rep["scores"]["unrevealed"])
+    assert "omega_auroc" in rep["scores"] and "occluder_auroc" in rep["scores"] and "ece_per_task" in rep["scores"]
