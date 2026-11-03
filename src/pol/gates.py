@@ -26,9 +26,11 @@ runs. Scores of the POL-V path, on the same gated events (decision target, with 
   omega / occluder_clf  AUROC of -omega vs a logistic probe (scaler, C=0.1) on omega's own input (pooled, actions,
                 2 early post frames), both for occluded vs visible outcome events (G2: omega >= 0.85 and
                 omega - occluder_clf >= 0, both reported)
+                occluder_clf trains on ALL train events with an observability label (controller ruling: deliberately
+                stronger than omega, which is label-free, so G2 is conservative)
   ece           10-bin ECE of the decision posterior on val, per task and macro (<= 0.10)
-Gates absent from the scores (no "frozen_v1", "ece", "occluder_auroc", "markov" key) are not checked, so old runs
-keep their old verdicts.
+decide(mode="polv") requires every POL-V gate key; mode="legacy" (--pol) skips gates whose key is absent and lists
+each skip in the verdict notes.
 Exit code 0 = all gates pass, 2 = N1, G1, G4 or ECE fails (stop: Plan B / paper B+D), 3 = only G2 fails (drop omega
 from the claim).
 """
@@ -45,14 +47,28 @@ VIEWS = ("v1", "act1", "pos1", "v2", "act2", "pos2", "w2", "pooled2", "has_v2")
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def decide(s, th=THRESHOLDS):
+def decide(s, th=THRESHOLDS, mode="legacy"):
     """s = {"unrevealed": {"pol", "markov", "pol_shuffled", "frozen_v1"}, "revealed": {"pol", "markov"}, "omega_auroc",
-    "occluder_auroc", "ece"}; values may be None. A gate whose key is absent is not checked (old runs)."""
+    "occluder_auroc", "ece"}; values may be None.
+    mode "polv": every POL-V gate key is required (absent -> that gate fails, note "missing <key>").
+    mode "legacy" (old --pol runs): G4 / ECE / the occluder comparison / N1 are skipped when their key is absent, and
+    each skip is written to the notes."""
     u, r = s.get("unrevealed", {}), s.get("revealed", {})
     reasons = []
+    polv = mode == "polv"
 
     def have(*v):
         return all(x is not None for x in v)
+
+    for key, d in [("pol", u), ("pol_shuffled", u), ("frozen_v1", u), ("omega_auroc", s), ("occluder_auroc", s), ("ece", s)]:
+        if polv and key not in d:
+            reasons.append(f"missing {key}")
+
+    def active(key, d):  # is this gate checked? polv: always (a missing key fails); legacy: only if the key is there
+        if polv or key in d:
+            return True
+        reasons.append(f"skipped: no {key} in scores (legacy mode)")
+        return False
 
     n1 = True
     if "markov" in u:
@@ -61,15 +77,17 @@ def decide(s, th=THRESHOLDS):
             n1 = n1 and abs(r["pol"] - r["markov"]) <= th["n1_revealed_tol"]
         else:
             reasons.append("N1: no revealed-set scores (control not checked)")
+    elif not polv:
+        reasons.append("skipped: no markov in scores (legacy mode)")
     g1 = have(u.get("pol"), u.get("pol_shuffled")) and u["pol"] >= th["g1_min"] and u["pol_shuffled"] <= th["g1_shuffled_max"]
     g4 = True
-    if "frozen_v1" in u:
+    if active("frozen_v1", u):
         g4 = have(u.get("pol"), u.get("frozen_v1")) and u["pol"] - u["frozen_v1"] >= th["g4_gain"]
     ece_ok = True
-    if "ece" in s:
-        ece_ok = have(s["ece"]) and s["ece"] <= th["ece_max"]
+    if active("ece", s):
+        ece_ok = have(s.get("ece")) and s["ece"] <= th["ece_max"]
     g2 = have(s.get("omega_auroc")) and s["omega_auroc"] >= th["g2_min"]
-    if "occluder_auroc" in s:  # omega must not lose to a probe that sees what it sees
+    if active("occluder_auroc", s):  # omega must not lose to a probe that sees what it sees
         g2 = g2 and have(s.get("occluder_auroc")) and s["omega_auroc"] - s["occluder_auroc"] >= th["g2_vs_occluder_min"]
     checks = [("G1", g1, [u.get("pol"), u.get("pol_shuffled")]), ("G2", g2, [s.get("omega_auroc")])]
     if "markov" in u:
@@ -79,13 +97,13 @@ def decide(s, th=THRESHOLDS):
     if "ece" in s:
         checks.append(("ECE", ece_ok, [s["ece"]]))
     if "occluder_auroc" in s:
-        checks.append(("G2 occluder baseline", g2, [s.get("occluder_auroc")]))
+        checks.append(("G2 occluder baseline", g2, [s.get("omega_auroc"), s.get("occluder_auroc")]))
     for name, ok, keys in checks:
         if not ok and not have(*keys):
             reasons.append(f"{name}: insufficient data")
     code = 0 if (n1 and g1 and g4 and ece_ok and g2) else (2 if not (n1 and g1 and g4 and ece_ok) else 3)
     return {"N1": bool(n1), "G1": bool(g1), "G2": bool(g2), "G4": bool(g4), "ECE": bool(ece_ok), "exit_code": code,
-            "notes": reasons, "thresholds": th}
+            "mode": mode, "notes": reasons, "thresholds": th}
 
 
 def _auroc(scores, labels):
@@ -128,6 +146,8 @@ def macro(per_task):
     reached 0.71 on round 1."""
     g = {"n": sum(s["n"] for s in per_task), "failures": sum(s["failures"] for s in per_task)}
     for k in ("pol", "pol_shuffled", "pol_fake_actions", "markov", "frozen_v1", "agm_same_labels", "ece"):
+        if k not in ("pol", "pol_shuffled", "pol_fake_actions", "markov") and not any(k in s for s in per_task):
+            continue  # POL-V-only scores: absent on the old --pol path, so its verdict never sees them
         v = [s[k] for s in per_task if s.get(k) is not None]
         g[k] = float(np.mean(v)) if v else None
     return g
@@ -248,10 +268,11 @@ def compute_scores_polv(polv_dir, markov_dir, data, features, tasks):
     markov = load_assets(markov_dir, features).get("markov_head") if markov_dir else None
     proj = __import__("pol.features", fromlist=["PCA"]).PCA.load(Path(features) / "proj50.npz") if markov is not None else None
     ids = labelled_ids(polv_dir)
-    agm = {}
+    agm, n_agm = {}, {}
     for t in tasks:  # AGM-style verify head on exactly the labels POL-V used
         lab = [it for it in tr if it["task"] == t and item_id(it) in ids and it["target"] is not None]
         agm[t] = _fit_probe(mean_v1_tokens(lab), [it["target"] for it in lab]) if lab else None
+        n_agm[t] = len(lab)
 
     def scores(sel):
         y = [it["target"] for it in sel]
@@ -277,7 +298,8 @@ def compute_scores_polv(polv_dir, markov_dir, data, features, tasks):
         return g
 
     gated = [it for it in va if it["target"] is not None and it["has_v2"]]
-    out = {"n_val_events": len(va), "n_labelled_ids": len(ids)}
+    out = {"n_val_events": len(va), "n_labelled_ids": len(ids), "agm_n_labels_used": n_agm,
+           "agm_tasks_without_probe": [t for t in tasks if agm[t] is None]}
     out["per_task"] = {t: scores([it for it in gated if it["task"] == t]) for t in tasks}
     for group, want in [("unrevealed", False), ("revealed", True)]:
         in_group = [t for t in tasks if bool(cfgs[t]["revealed"]) == want]
@@ -307,6 +329,7 @@ def compute_scores_polv(polv_dir, markov_dir, data, features, tasks):
     mean = lambda d: float(np.mean([v for v in d.values() if v is not None])) if any(v is not None for v in d.values()) else None
     out["omega_auroc"], out["occluder_auroc"] = mean(om), mean(oc)
     out["omega_per_task"], out["occluder_per_task"], out["n_occlusion_events"] = om, oc, n_occ
+    out["omega_dropped_tasks"] = sorted(t for t in tasks if om.get(t) is None or oc.get(t) is None)  # no AUROC: not in the macro
     return out
 
 
@@ -376,7 +399,7 @@ def main(argv=None):
         scores = compute_scores_polv(a.polv, a.markov, a.data, a.features, a.tasks)
     else:
         scores = compute_scores(a.pol, a.markov, a.data, a.features, a.tasks)
-    verdict = decide(scores)
+    verdict = decide(scores, mode="polv" if a.polv else "legacy")
     report = {"scores": scores, "verdict": verdict}
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(report, indent=1))

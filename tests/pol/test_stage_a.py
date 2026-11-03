@@ -146,6 +146,9 @@ def test_gates_end_to_end(dataset, tmp_path, monkeypatch):
                        "--features", feats, "--tasks", "SealedBin-3", "--out", str(tmp_path / "gates.json")])
     report = json.loads((tmp_path / "gates.json").read_text())
     assert code in (0, 2, 3) and set(report["verdict"]) >= {"N1", "G1", "G2", "exit_code"}
+    v = report["verdict"]
+    assert v["G4"] and v["ECE"] and v["mode"] == "legacy"  # POL-V gates never fail an old run
+    assert not {"frozen_v1", "agm_same_labels", "ece"} & set(report["scores"]["unrevealed"])
     u = report["scores"]["unrevealed"]
     assert {"n", "failures", "pol", "pol_shuffled", "pol_fake_actions", "markov"} <= set(u)
     assert set(report["scores"]["per_task"]) == {"SealedBin-3"}
@@ -156,7 +159,7 @@ POLV_PASS = {"unrevealed": {"pol": 0.9, "pol_shuffled": 0.5, "frozen_v1": 0.8}, 
 
 
 def test_polv_all_gates_pass():
-    v = decide(POLV_PASS)
+    v = decide(POLV_PASS, mode="polv")
     assert (v["G1"], v["G2"], v["G4"], v["ECE"], v["exit_code"]) == (True, True, True, True, 0)
 
 
@@ -172,13 +175,13 @@ def test_polv_all_gates_pass():
     ({"occluder_auroc": None}, 3, "G2"),
 ])
 def test_polv_failure_branches(change, code, failed):
-    v = decide({**POLV_PASS, **change})
+    v = decide({**POLV_PASS, **change}, mode="polv")
     assert v["exit_code"] == code and not v[failed]
 
 
 def test_polv_g2_ties_the_occluder_probe_and_g1_beats_g2():
-    assert decide({**POLV_PASS, "omega_auroc": 0.85, "occluder_auroc": 0.85})["exit_code"] == 0
-    both = decide({**POLV_PASS, "omega_auroc": 0.5, "ece": 0.3})
+    assert decide({**POLV_PASS, "omega_auroc": 0.85, "occluder_auroc": 0.85}, mode="polv")["exit_code"] == 0
+    both = decide({**POLV_PASS, "omega_auroc": 0.5, "ece": 0.3}, mode="polv")
     assert both["exit_code"] == 2 and not both["G2"] and not both["ECE"]
 
 
@@ -199,10 +202,7 @@ def test_polv_scorers_on_synthetic_arrays():
               "act2": rng.normal(size=(16, 7)).astype(np.float32), "pos2": rng.normal(size=(16, 7)).astype(np.float32),
               "w2": rng.normal(size=(16,)).astype(np.float32), "pooled2": rng.normal(size=(2, 12)).astype(np.float32),
               "early": rng.normal(size=(2, 2, 12)).astype(np.float32)} for i in range(12)]
-    try:
-        p1, p2 = polv_p_target(heads, items, use_v2=False), polv_p_target(heads, items)
-    except Exception as e:  # shapes of the synthetic items are a guess; surface mismatches as a skip, not a pass
-        pytest.skip(f"synthetic item shapes: {e}")
+    p1, p2 = polv_p_target(heads, items, use_v2=False), polv_p_target(heads, items)
     assert p1.shape == (12,) and ((0 <= p2) & (p2 <= 1)).all()
     no_v2 = [i for i, it in enumerate(items) if not it["has_v2"]]
     assert np.allclose(p1[no_v2], p2[no_v2], atol=1e-6)   # no re-encounter: v2 adds nothing
@@ -227,3 +227,19 @@ def test_polv_gates_end_to_end(dataset, tmp_path, monkeypatch):
     assert code in (0, 2, 3) and set(rep["verdict"]) >= {"G1", "G2", "G4", "ECE", "exit_code"}
     assert {"pol", "frozen_v1", "pol_shuffled", "agm_same_labels", "ece", "n"} <= set(rep["scores"]["unrevealed"])
     assert "omega_auroc" in rep["scores"] and "occluder_auroc" in rep["scores"] and "ece_per_task" in rep["scores"]
+
+
+@pytest.mark.parametrize("missing", ["frozen_v1", "ece", "occluder_auroc", "omega_auroc", "pol", "pol_shuffled"])
+def test_polv_mode_requires_every_key(missing):
+    s = {**POLV_PASS, "unrevealed": dict(POLV_PASS["unrevealed"])}
+    s["unrevealed"].pop(missing, None)
+    s.pop(missing, None)
+    v = decide(s, mode="polv")
+    assert v["exit_code"] != 0 and f"missing {missing}" in v["notes"]
+
+
+def test_legacy_mode_skips_are_noted():
+    v = decide(PASS)
+    assert v["exit_code"] == 0 and v["mode"] == "legacy"
+    assert any("frozen_v1" in n for n in v["notes"]) and any("ece" in n for n in v["notes"])
+    assert any("occluder_auroc" in n for n in v["notes"])
