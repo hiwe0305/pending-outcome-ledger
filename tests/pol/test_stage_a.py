@@ -225,7 +225,11 @@ def test_polv_gates_end_to_end(dataset, tmp_path, monkeypatch):
                        "--out", str(tmp_path / "gates.json")])
     rep = json.loads((tmp_path / "gates.json").read_text())
     assert code in (0, 2, 3) and set(rep["verdict"]) >= {"G1", "G2", "G4", "ECE", "exit_code"}
-    assert {"pol", "frozen_v1", "pol_shuffled", "agm_same_labels", "ece", "n"} <= set(rep["scores"]["unrevealed"])
+    sc = rep["scores"]
+    # tiny synthetic val: every val event is a calibration id, so none may be scored
+    assert sc["n_val_scored"] == sc["n_val_events"] - sum(sc["n_calibration_excluded"].values())
+    assert sc["n_calibration_excluded"]["SealedBin-3"] > 0 and sc["per_task"]["SealedBin-3"]["n"] == 0
+    assert "n" in sc["unrevealed"] or "pooled" in sc["unrevealed"]
     assert "omega_auroc" in rep["scores"] and "occluder_auroc" in rep["scores"] and "ece_per_task" in rep["scores"]
 
 
@@ -243,3 +247,30 @@ def test_legacy_mode_skips_are_noted():
     assert v["exit_code"] == 0 and v["mode"] == "legacy"
     assert any("frozen_v1" in n for n in v["notes"]) and any("ece" in n for n in v["notes"])
     assert any("occluder_auroc" in n for n in v["notes"])
+
+
+def _mk(task, i, target=True):
+    rng = np.random.default_rng(i)
+    return {"task": task, "seed": i, "t": 0, "target": target, "v1": rng.normal(size=(3, 4)).astype("float32")}
+
+
+def test_calibration_ids_are_excluded_from_val_scoring():
+    from pol.evidence import item_id
+    from pol.gates import heldout_val
+
+    va = [_mk("a", i) for i in range(10)] + [_mk("b", i) for i in range(10)]
+    calib = {item_id(it) for it in va if it["task"] == "a" and it["seed"] < 4}
+    held, n_ex = heldout_val(va, calib, ["a", "b"])
+    assert n_ex == {"a": 4, "b": 0} and len(held) == 16
+    assert not calib & {item_id(it) for it in held}
+
+
+def test_agm_uses_all_48_labels_train_plus_val():
+    from pol.evidence import item_id
+    from pol.gates import fit_agm
+
+    tr = [_mk("a", i, bool(i % 2)) for i in range(40)]
+    va = [_mk("a", 100 + i, bool(i % 2)) for i in range(20)]
+    ids = {item_id(it) for it in tr[:32]} | {item_id(it) for it in va[:16]}
+    agm, n = fit_agm(tr + va, ids, ["a"])
+    assert n == {"a": 48} and agm["a"] is not None

@@ -249,14 +249,37 @@ def mean_v1_tokens(items):
 
 
 def labelled_ids(polv_dir):
-    return set(json.loads((Path(polv_dir) / "assets.json").read_text())["labelled_ids"]["train"])
+    """{"train": set, "val": set}: the ids POL-V saw labels for (val ids also fed temperature calibration)."""
+    li = json.loads((Path(polv_dir) / "assets.json").read_text())["labelled_ids"]
+    return {k: set(li.get(k, [])) for k in ("train", "val")}
+
+
+def _iid(it):
+    from .evidence import item_id
+
+    return item_id(it)
+
+
+def heldout_val(va, calib_ids, tasks):
+    """Val events not used for calibration/labels; returns (held-out items, {task: n excluded})."""
+    held = [it for it in va if _iid(it) not in calib_ids]
+    return held, {t: sum(1 for it in va if it["task"] == t) - sum(1 for it in held if it["task"] == t) for t in tasks}
+
+
+def fit_agm(pool, ids, tasks):
+    """AGM-style verify head per task on exactly the labelled ids POL-V used; pool = train + val items."""
+    agm, n = {}, {}
+    for t in tasks:
+        lab = [it for it in pool if it["task"] == t and _iid(it) in ids and it["target"] is not None]
+        agm[t] = _fit_probe(mean_v1_tokens(lab), [it["target"] for it in lab]) if lab else None
+        n[t] = len(lab)
+    return agm, n
 
 
 def compute_scores_polv(polv_dir, markov_dir, data, features, tasks):
     from .assets import load_assets
     from .config import load_config
     from .data import stage_a_items
-    from .evidence import item_id
     from .features import FeatureStore
     from .train_stage_a import markov_xy
 
@@ -267,12 +290,11 @@ def compute_scores_polv(polv_dir, markov_dir, data, features, tasks):
     heads = load_assets(polv_dir, features)["evidence_heads"]
     markov = load_assets(markov_dir, features).get("markov_head") if markov_dir else None
     proj = __import__("pol.features", fromlist=["PCA"]).PCA.load(Path(features) / "proj50.npz") if markov is not None else None
-    ids = labelled_ids(polv_dir)
-    agm, n_agm = {}, {}
-    for t in tasks:  # AGM-style verify head on exactly the labels POL-V used
-        lab = [it for it in tr if it["task"] == t and item_id(it) in ids and it["target"] is not None]
-        agm[t] = _fit_probe(mean_v1_tokens(lab), [it["target"] for it in lab]) if lab else None
-        n_agm[t] = len(lab)
+    lid = labelled_ids(polv_dir)
+    ids = lid["train"] | lid["val"]
+    agm, n_agm = fit_agm(tr + va, ids, tasks)  # same 48 labels/task as POL-V
+    va_all = va
+    va, n_excluded = heldout_val(va, lid["val"], tasks)  # every POL-V-path score uses held-out val only
 
     def scores(sel):
         y = [it["target"] for it in sel]
@@ -298,7 +320,8 @@ def compute_scores_polv(polv_dir, markov_dir, data, features, tasks):
         return g
 
     gated = [it for it in va if it["target"] is not None and it["has_v2"]]
-    out = {"n_val_events": len(va), "n_labelled_ids": len(ids), "agm_n_labels_used": n_agm,
+    out = {"n_val_events": len(va_all), "n_val_scored": len(va), "n_calibration_excluded": n_excluded,
+           "n_labelled_ids": len(ids), "agm_n_labels_used": n_agm,
            "agm_tasks_without_probe": [t for t in tasks if agm[t] is None]}
     out["per_task"] = {t: scores([it for it in gated if it["task"] == t]) for t in tasks}
     for group, want in [("unrevealed", False), ("revealed", True)]:
