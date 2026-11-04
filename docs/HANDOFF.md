@@ -424,6 +424,29 @@ Round 4 on the remote from 2026-11-04 16:55 (same recipe as round 3, `logs/round
 uncommitted changes, by scp): round-3 BatteriesSort moved to `data/pol_round3/BatteriesSort-3`; results in
 `runs/round4/probe_p1.json`. Round 3 remains the reference for P1 (the expert change touches what happens after v1).
 
+Deleted on the remote (2026-11-04, 40 GB): `data/pol_leaky`, `data/pol_round2`, `data/features_round2`,
+`data/features_round1/BatteriesSort-3`, and the October pilots `data/pol_yield`, `data/pol_debug`, `data/features`.
+Their results stay in `runs/round{1,2}` and `data/p1_paired`; new probes on the leaky or round-2 data need a recollect.
+Kept: `data/pol` (round 4 + SealedBin/GatherInject round 1), `data/pol_round3`, `data/features_round{1,3,4}`
+(round-1 `pca.npz` is the PCA of every round).
+
+#### Round 4 result: P1 passes again, the expert now re-tests (2026-11-05)
+
+300 kept (94/187, 100/146, 100/143), mean 982 steps. Expert: of 84 occluded tests 68 re-tested (28 right away),
+16 never; of 866 visible tests none (round 3: 5 of 110 and 1 of 796). `runs/round4/probe_p1.json`, mean / blocks:
+
+| | round 3 | round 4 | gate |
+|---|---|---|---|
+| leak (shutter down, val+train) | 0.39 / 0.41 | 0.46 [0.33, 0.58] / 0.49 [0.37, 0.63] | ≤ 0.60 |
+| v1 broken vs spill | 0.51 / 0.45 | 0.46 / 0.43 | ≤ 0.65 |
+| v2 working vs broken | 0.44 / 0.49 | 0.49 / 0.43 | ≤ 0.65 |
+| decision v1 / v2 / v1⊕v2, all labels | 0.72 / 0.65 / 0.93 | 0.75 / 0.61 / 0.91 [0.84, 0.96] | v1⊕v2 ≥ 0.85 |
+| decision v1⊕v2, 32 labels (20 draws) | 0.85 / 0.87 | 0.81 / 0.84 | |
+
+Gain of v1⊕v2 over the best single view: +0.16 with all labels, +0.15 with 32 (round 3: +0.21, +0.20). At 32 labels
+v1⊕v2 is just under 0.85 in round 4. The shutter-down val stratum is 10 events: no reading. Legacy Stage A: POL 0.49
+vs Markov 0.61 on unrevealed BatteriesSort (round 3: 0.38 vs 0.64), gates exit 2 as before.
+
 ## Next (decision)
 
 Six steps (four objectives, a stronger residual, this prototype): the unsupervised outcome clustering does not
