@@ -387,6 +387,43 @@ Round 3 on the remote (code = 5f4c37b + these uncommitted changes, copied by scp
 `data/pol_round2/BatteriesSort-3`; `ROUND=round3 TASKS=BatteriesSort-3 SEED_BASE=10000 PCA_FROM=data/features_round1/pca.npz`
 then `probe_p1.py` → `runs/round3/probe_p1.json` (`logs/round3/run_p1.sh`, progress in `logs/round3/progress.log`).
 
+#### Round 3 result: P1 passes (2026-11-04), after fixing the occlusion label
+
+Round 3 ran 00:17–06:25 (300 kept, 395 attempts; legacy gates exit 2, not read). The first P1 read failed on the leak
+(0.59 / 0.67): **`labels.event_observable` was wrong for BatteriesSort**. The env draws `lamp_occluded` at each insert
+and keeps it until the next one, and the label window started at t − 6, so a visible test right after an occluded
+one counted as occluded (74 of 184 "occluded" inserts were visible at their own insert step). Fixed: the flag is read
+at the test's insert / spill step (`labels._insert_step`; test `test_battery_observable_is_the_shutter_of_this_test`).
+SealedBin's shutter counts down after each drop, so its window check stays. `runs/round3/probe_p1.json` (fixed
+labels; the first read is `probe_p1_looselabel.json`):
+
+| | round 2 | round 3 | gate |
+|---|---|---|---|
+| leak: train visible → truly shutter-down (n = 110, 54 broken), mean / blocks | (0.56 / 0.60, old labels) | 0.39 / 0.41 [0.29, 0.51] | ≤ 0.60 ✓ |
+| 5-fold CV inside truly shutter-down (episode groups) | | 0.45 [0.34, 0.56] | (no cue) |
+| v1 broken vs spill, 32 labels / all | 1.00 / 1.00 | 0.53 ± 0.10 / 0.45–0.51 | ≤ 0.65 ✓ |
+| v2 working vs broken, 32 / all | 0.50 / 0.40–0.44 | 0.47–0.48 / 0.44–0.49 | ≤ 0.65 ✓ |
+| decision v1 / v2 / v1⊕v2, all labels (val 85, 28 pos.) | 0.96 / 0.62 / 0.96 | 0.70–0.72 / 0.65–0.69 / **0.93** [0.85, 0.98] | ≥ 0.85 ✓ |
+| decision v1⊕v2, 32 labels | 0.90 | 0.85–0.87 ± 0.05 | |
+| gain v1⊕v2 − max(v1, v2), all / 32 labels | 0.00 | **+0.21 / +0.20** | ≥ 0.05 (P0 rule) |
+
+BatteriesSort is now the one U-Suite task where the decision needs both views (H4 testable). The truly shutter-down
+val stratum is tiny (12 events, 5 broken), so no per-stratum claim from it. The transfer leak sits slightly below
+0.5 while the CV inside the stratum finds nothing; reported, not explained.
+
+**Expert bug found on the way (affects round 1–3 demos, not the Stage A probes):** `collect_batteriessort.lamp_reading`
+decides "occluded" from the first 2 rows of the test, which come before the insert and so carry the previous test's
+flag, and it reads `lamp_on` (the true reading). Of the 110 truly occluded tests in round 3, **105 were read through
+the shutter** by the expert: those 105 were never re-tested (the other 5 were), so the demos sort occluded batteries
+from hidden information. (Visible tests after an occluded one should then have been re-tested, but only 1 of 796
+visible tests was; not explained.) Fixed 2026-11-04: `lamp_reading` reads occlusion and `lamp_shown` from the
+insert / spill step on (`tests/pol/test_expert_lamp.py`). Trial on the remote (18 kept / 26, seeds 10000+): 3 of 5
+occluded tests re-tested, 0 of 52 visible; mean 1033 steps (round 3: 918), kept rate 69 % (round 3: 76 %).
+
+Round 4 on the remote from 2026-11-04 16:55 (same recipe as round 3, `logs/round4/run_p1.sh`; code = 5f4c37b + the
+uncommitted changes, by scp): round-3 BatteriesSort moved to `data/pol_round3/BatteriesSort-3`; results in
+`runs/round4/probe_p1.json`. Round 3 remains the reference for P1 (the expert change touches what happens after v1).
+
 ## Next (decision)
 
 Six steps (four objectives, a stronger residual, this prototype): the unsupervised outcome clustering does not

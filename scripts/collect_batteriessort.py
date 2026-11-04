@@ -75,13 +75,18 @@ class Recorder:
 
 
 def lamp_reading(rows, start, persistent):
-    """What the cameras showed after an insert: None if the shutter was down, else lamp on/off."""
+    """What the cameras showed after an insert: None if the shutter was down, else lamp on/off.
+
+    Read from the insert (or spill) step on: the env keeps lamp_occluded from the previous test until this insert,
+    and lamp_on is the true reading behind the shutter. Round 3 read 105 of 110 occluded tests through it."""
     window = rows[start:]
-    if not window or any(r["log"]["lamp_occluded"] for r in window[:2]):
+    k = next((i for i, r in enumerate(window) if r["log"]["insert_event"] or r["log"]["spill_event"]), None)
+    if k is None or window[k]["log"]["lamp_occluded"]:
         return None
+    shown = "lamp_shown" if "lamp_shown" in window[k]["log"] else "lamp_on"
     if persistent:
-        return bool(window[-1]["log"]["lamp_on"])
-    return any(bool(r["log"]["lamp_on"]) for r in window)
+        return bool(window[-1]["log"][shown])
+    return any(bool(r["log"][shown]) for r in window[k:])
 
 
 def run_episode(env, prim, model, deferred, persistent, max_retests, rng):

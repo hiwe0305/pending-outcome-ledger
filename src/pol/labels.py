@@ -32,15 +32,20 @@ def decision_target(family, outcome):
 gate_target = decision_target  # old name
 
 
-def _battery(e, logs):
+def _insert_step(e, logs):
+    """Step of the insert or spill that belongs to the release event e, or None."""
     lo, hi = e.t + INSERT_WINDOW[0], min(len(logs), e.t + INSERT_WINDOW[1])
-    for t in range(max(0, lo), hi):
-        if logs[t].get("spill_event"):
-            return 2
-        if logs[t].get("insert_event"):
-            seated = [i for i, l in enumerate(logs[t]["location"]) if l == 2]
-            return 0 if seated and logs[t]["working"][seated[0]] else 1
-    return None
+    return next((t for t in range(max(0, lo), hi) if logs[t].get("spill_event") or logs[t].get("insert_event")), None)
+
+
+def _battery(e, logs):
+    t = _insert_step(e, logs)
+    if t is None:
+        return None
+    if logs[t].get("spill_event"):
+        return 2
+    seated = [i for i, l in enumerate(logs[t]["location"]) if l == 2]
+    return 0 if seated and logs[t]["working"][seated[0]] else 1
 
 
 def _bin(e, logs, since=0):
@@ -83,7 +88,8 @@ def event_observable(family, events, logs, post=16):
             continue
         window = logs[max(0, e.t + RELEASE_LAG[0]):min(len(logs), e.t + post)]
         if family == "batteries_sort":
-            out.append(not any(r.get("lamp_occluded") for r in window))
+            # lamp_occluded is drawn at each insert and kept until the next one: read it at this test's insert step
+            out.append(not logs[_insert_step(e, logs)].get("lamp_occluded"))
         elif family == "sealed_bin":
             out.append(not any(r.get("shutter") for r in window))
         else:

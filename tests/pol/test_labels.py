@@ -42,6 +42,17 @@ def test_battery_insert_outcomes():
     assert event_outcomes("batteries_sort", ev, battery_logs(50, 45, "insert", True)) == [None]
 
 
+def test_battery_observable_is_the_shutter_of_this_test():
+    """The env keeps lamp_occluded from one insert to the next: before this test's insert the flag still belongs
+    to the previous test, so only the insert step and after count (round 3: 74 of 184 "occluded" were visible)."""
+    ev = [Event(20, "R+", np.zeros(3))]
+    for before, at, visible in ((True, False, True), (False, True, False), (False, False, True)):
+        logs = battery_logs(50, 21, "insert", True)
+        for t in range(50):
+            logs[t]["lamp_occluded"] = before if t < 21 else at
+        assert event_observable("batteries_sort", ev, logs) == [visible]
+
+
 def test_slip_during_transport_labels_the_following_r0():
     """GatherInject slip (pilot episode 3): the cube leaves the gripper mid-transport (sim release at t=107),
     the gripper closes on nothing and the FSM reports R0 at t=126, not R+."""
